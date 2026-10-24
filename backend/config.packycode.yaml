@@ -1,0 +1,17 @@
+providers:
+  packycode:
+    kind: openai-responses
+    base_url: https://cf.api.fan/v1
+    model: qwen3.7-flash
+    embedding_model: null
+    api_key_env: PACKYCODE_API_KEY
+  mock:
+    kind: mock
+    base_url: ""
+    model: deterministic
+    embedding_model: null
+    api_key_env: null
+roles:
+  branches: packycode
+  writing: packycode
+  final: packycode

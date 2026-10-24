@@ -20,8 +20,15 @@ dist/
 .env.*
 !.env.example
 config.yaml
+api-config.txt
+*-key.dpapi
 
 # Editors and OS
 .vscode/
 .idea/
 .DS_Store
+.worktrees/
+.superpowers/
+.tmp/
+backend/.tmp/
+frontend/.pnpm-store/

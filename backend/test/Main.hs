@@ -1,8 +1,12 @@
 module Main (main) where
 
+import qualified BranchesSpec
 import qualified CitationsSpec
 import qualified EntriesSpec
+import qualified ModelProviderSpec
+import qualified PrefetchSpec
 import qualified ProtocolSpec
+import qualified SchedulerSpec
 import Test.Hspec (describe, hspec)
 import qualified WritingSpec
 
@@ -12,3 +16,7 @@ main = hspec $ do
   describe "Entries" EntriesSpec.spec
   describe "Citations" CitationsSpec.spec
   describe "Writing" WritingSpec.spec
+  describe "Model providers" ModelProviderSpec.spec
+  describe "Branches" BranchesSpec.spec
+  describe "Scheduler" SchedulerSpec.spec
+  describe "Prefetch" PrefetchSpec.spec
