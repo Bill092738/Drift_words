@@ -12,6 +12,8 @@ module Drift.Output.Cite
   , apaStyle
   , renderCitations
   , escapeMarkdown
+  , escapeInline
+  , escapeBlockStart
   ) where
 
 import Citeproc
@@ -170,6 +172,18 @@ markdown = \case
 -- document, so it cannot inject headings, links, HTML or emphasis.
 escapeMarkdown :: Text -> Text
 escapeMarkdown = escapeInline . T.unwords . T.words
+
+-- | Stops a paragraph from being read as a heading, list item or rule by its
+-- first characters. Apply it to the start of every paragraph of foreign text.
+escapeBlockStart :: Text -> Text
+escapeBlockStart t = case T.uncons t of
+  Just (c, _) | c `elem` ("#-+=" :: String) -> "\\" <> t
+  Just (c, _) | c >= '0' && c <= '9' ->
+    let (digits, rest) = T.span (\x -> x >= '0' && x <= '9') t
+     in case T.uncons rest of
+          Just (p, more) | p == '.' || p == ')' -> digits <> "\\" <> T.singleton p <> more
+          _ -> t
+  _ -> t
 
 -- | Escapes without touching white space, for the pieces citeproc emits, whose
 -- leading and trailing spaces are part of the reference.
