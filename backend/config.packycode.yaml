@@ -2,7 +2,7 @@ providers:
   packycode:
     kind: openai-responses
     base_url: https://cf.api.fan/v1
-    model: gpt-6.1-sol
+    model: qwen3.7-flash
     embedding_model: null
     api_key_env: PACKYCODE_API_KEY
   mock:
