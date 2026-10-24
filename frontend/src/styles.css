@@ -89,6 +89,11 @@ select {
   font-weight: 650;
 }
 
+.dev-toolbar-status {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
 .dev-toolbar select,
 .dev-toolbar button,
 .dev-toolbar a {

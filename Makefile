@@ -4,8 +4,9 @@
 #   make check      everything CI runs: build, tests, typecheck, frontend build
 #   make server     run the backend on :8080
 #   make dev        run the frontend dev server (proxies /api to :8080)
+#   make app        build the frontend and serve the whole app from the backend on :8080
 
-.PHONY: protocol check backend-build backend-test backend-restart-test frontend-install frontend-check server dev
+.PHONY: protocol check backend-build backend-test backend-restart-test frontend-install frontend-check server dev app
 
 protocol:
 	cd backend && cabal run -v0 drift-gen-ts -- ../frontend/src/protocol/generated.ts
@@ -33,3 +34,7 @@ server:
 
 dev:
 	cd frontend && pnpm dev
+
+app:
+	cd frontend && pnpm build
+	cd backend && cabal run drift-server
