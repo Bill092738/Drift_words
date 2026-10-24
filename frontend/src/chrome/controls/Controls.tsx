@@ -10,14 +10,40 @@ const DIVERGENCE_SEND_MS = 150;
 /**
  * The few things the user can do besides tapping words: set divergence, and
  * type one word (a starting word before the first pick, an inserted word
- * after). There is no other text input anywhere.
+ * after), and wrap up. There is no other text input anywhere.
  */
-export function Controls({ store }: { store: StoreApi<SessionStore> }) {
+interface Props {
+  store: StoreApi<SessionStore>;
+  /** Called when the user confirms the wrap-up, so the outputs open when they arrive. */
+  onWrapUp?: () => void;
+  onViewOutputs?: () => void;
+}
+
+export function Controls({ store, onWrapUp, onViewOutputs }: Props) {
   const send = useSession(store, (s) => s.send);
   const divergence = useSession(store, (s) => s.state.divergence);
   const started = useSession(store, (s) => s.state.nodes.size > 0);
   const hasCloud = useSession(store, (s) => s.state.cloud.length > 0);
   const rejection = useSession(store, (s) => s.lastRejection);
+  const wrappedUp = useSession(store, (s) => s.state.wrappedUp);
+  const hasOutputs = useSession(store, (s) => s.state.outputs !== null);
+
+  // Wrapping up ends the exploration, so it takes a second press: the first one asks.
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => {
+    if (!confirming) return;
+    const t = setTimeout(() => setConfirming(false), 4000);
+    return () => clearTimeout(t);
+  }, [confirming]);
+  const wrapUp = () => {
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    setConfirming(false);
+    send({ type: 'WrapUp' });
+    onWrapUp?.();
+  };
 
   // The slider moves locally at once and sends after a short pause.
   const [local, setLocal] = useState(divergence);
@@ -53,6 +79,22 @@ export function Controls({ store }: { store: StoreApi<SessionStore> }) {
   }, [rejection]);
 
   if (!hasCloud) return null;
+
+  if (wrappedUp) {
+    return (
+      <div className="controls controls-wrapped">
+        {hasOutputs ? (
+          <button type="button" className="outputs-open" onClick={onViewOutputs}>
+            View your outputs
+          </button>
+        ) : (
+          <span className="wrap-status" role="status">
+            Wrapped up. Writing your outputs…
+          </span>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="controls">
@@ -98,6 +140,18 @@ export function Controls({ store }: { store: StoreApi<SessionStore> }) {
           +
         </button>
       </form>
+      {started && (
+        <button
+          type="button"
+          className="wrap-up"
+          data-confirming={confirming || undefined}
+          onClick={wrapUp}
+          aria-label={confirming ? 'Confirm wrap up' : 'Wrap up'}
+          title="Finish and produce the decision tree, the draft and the final document"
+        >
+          {confirming ? 'Wrap up now?' : 'Wrap up'}
+        </button>
+      )}
     </div>
   );
 }

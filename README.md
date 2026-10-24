@@ -6,7 +6,7 @@ Driftwords is a browser-based tool for the moments when you want to do something
 
 Language models and web search run in the background. You never talk to an AI.
 
-> **Status:** M1 to M5 are in place: the frontend runs a live session against the backend, with model-generated rings when a model is configured. M6 source search and the M7 writing pipeline are implemented as libraries and in the UI, but the live server does not run them yet. M8 outputs remain. "Driftwords" is a working title.
+> **Status:** M1 to M5 are in place: the frontend runs a live session against the backend, with model-generated rings when a model is configured. M6 source search and the M7 writing pipeline are implemented as libraries and in the UI, but the live server does not run them yet. M8 is in: "Wrap up" ends a session, the server builds the decision tree, draft and final document (`Drift.Output.*`) and sends them as `OutputsReady`, the outputs view shows them, and downloads are Markdown, HTML and Word (`GET /api/sessions/:id/export/{tree,draft,final}/{md,html,docx}`). Because the live server writes no entries or sources yet, a live session's draft and final document are empty until M6 and M7 are wired in; the decision tree is complete. "Driftwords" is a working title.
 
 ## Documents
 

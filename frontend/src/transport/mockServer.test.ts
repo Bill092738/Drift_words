@@ -23,6 +23,25 @@ describe('MockServer', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
+  it('wraps up, then sends the outputs as a separate event, and only once', async () => {
+    const h = harness();
+    await h.settle();
+    h.server.send({ type: 'Pick', candidateId: h.state().cloud[0]!.candidateId });
+    await h.settle();
+    h.server.send({ type: 'WrapUp' });
+    h.server.send({ type: 'WrapUp' });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(h.state().wrappedUp).toBe(true);
+    expect(h.state().outputs).toBeNull();
+    await h.settle();
+    const types = h.events().map((e) => e.type);
+    expect(types.filter((t) => t === 'WrappedUp')).toHaveLength(1);
+    expect(types.filter((t) => t === 'OutputsReady')).toHaveLength(1);
+    expect(types.indexOf('OutputsReady')).toBeGreaterThan(types.indexOf('WrappedUp'));
+    expect(h.state().outputs?.decisionTree).toContain(`[${h.state().nodes.get(1)!.word}]`);
+    expect(h.state().outputs?.draft).toContain('# Draft');
+  });
+
   it('spawns a cloud, then grows a streamed, sealed ring for a picked word', async () => {
     const h = harness();
     await h.settle();

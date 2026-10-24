@@ -122,7 +122,9 @@ spec = describe "M1 server process restart" $
 
           submitCommand connection 801 WrapUp
           wrapped <- collectUntilEvent connection (== WrappedUp)
-          pure (continued <> wrapped)
+          -- The server then builds the wrap-up outputs and commits them as a separate event.
+          outputsReady <- collectUntilEvent connection isOutputsReady
+          pure (continued <> wrapped <> outputsReady)
 
       let historyAfterContinuation = secondSession
       assertContiguous historyAfterContinuation
@@ -308,6 +310,10 @@ walkFifteen connection = go 0
 isSeal :: Event -> Bool
 isSeal (BranchesOffered _ _) = True
 isSeal _ = False
+
+isOutputsReady :: Event -> Bool
+isOutputsReady (OutputsReady _) = True
+isOutputsReady _ = False
 
 latestSealedCandidates :: [Stamped] -> [Candidate]
 latestSealedCandidates stamped = case [candidates | Stamped _ _ (BranchesOffered _ candidates) <- stamped] of
