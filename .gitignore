@@ -25,3 +25,8 @@ config.yaml
 .vscode/
 .idea/
 .DS_Store
+.worktrees/
+.superpowers/
+.tmp/
+backend/.tmp/
+frontend/.pnpm-store/
