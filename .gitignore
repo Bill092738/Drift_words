@@ -16,6 +16,10 @@ dist/
 # Runtime data and secrets
 *.db
 *.db-journal
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
 .env
 .env.*
 !.env.example
