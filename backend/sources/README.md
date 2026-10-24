@@ -11,7 +11,7 @@ The session actor allocates the `SourceId`, persists `SourceFound` and any late 
 
 ## Live server
 
-From `backend/`, run `cabal run drift-server`. Sources remain disabled unless `DRIFT_SOURCES=1`; no source HTTP environment is constructed while disabled. Set optional `OPENALEX_API_KEY` for the OpenAlex request. No `DRIFT_CONFIG` or model is needed. The default writer emits `fromWord → toWord` with an empty explanation; `DRIFT_WRITING=0` disables it. Model writing through the provider-independent seam is deferred to Gemini work.
+From `backend/`, run `cabal run drift-server`. Sources are on by default; `DRIFT_SOURCES=0` turns them off, and then no source HTTP environment is constructed. Set optional `OPENALEX_API_KEY` for the OpenAlex request. No `DRIFT_CONFIG` or model is needed. The default writer emits `fromWord → toWord` with an empty explanation; `DRIFT_WRITING=0` disables it. Model writing through the provider-independent seam is deferred to Gemini work.
 
 One shared HTTP environment owns cache and host-rate-limit state across sessions. A server-wide pool permits two active searches and sixteen queued edges. Full-queue admission skips the newest search, diagnoses it and still writes its template note. Writing starts after source completion or 250ms; source delivery can continue afterward. Picks, rings and backtracks do not wait for either job. Moving focus keeps older edge work valid; wrap-up drops later results, and shutdown cancels and joins workers before closing HTTP/SQLite resources.
 

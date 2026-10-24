@@ -10,6 +10,9 @@
 --   the deterministic offline vocabulary ("Drift.Model.SessionMock").
 -- * @DRIFT_WRITING@: set to 0 to disable sidebar entries. By default each
 --   non-root edge receives a deterministic template entry, without a model.
+-- * @DRIFT_SOURCES@: set to 0 to turn off source search. By default every
+--   non-root edge searches Wikipedia and OpenAlex (no model or key needed;
+--   @OPENALEX_API_KEY@ raises the OpenAlex daily budget).
 -- * The config's optional @final@ role writes the final document at wrap-up.
 --   Without it, or when the model fails, the final document is the kept
 --   entries' own text.
@@ -82,11 +85,13 @@ main = do
                 _ -> frontend request respond
           run port (websocketsOr defaultConnectionOptions (webSocketApp manager) app)
 
--- | Source HTTP state is shared across all sessions and exists only on opt-in.
--- The manager and its workers close inside this scope, before the HTTP owner.
+-- | Source HTTP state is shared across all sessions. Search is on unless
+-- @DRIFT_SOURCES=0@; nothing is built or called when it is off. The manager
+-- and its workers close inside this scope, before the HTTP owner.
 withSources :: (Maybe SourceSearch -> IO a) -> IO a
 withSources action = lookupEnv "DRIFT_SOURCES" >>= \case
-  Just "1" -> do
+  Just "0" -> putStrLn "sources: disabled (DRIFT_SOURCES=0)" >> action Nothing
+  _ -> do
     key <- fmap T.pack <$> lookupEnv "OPENALEX_API_KEY"
     putStrLn ("sources: Wikipedia/OpenAlex (OpenAlex key " <> maybe "absent" (const "present") key <> ")")
     withFetch defaultHttpConfig $ \fetch -> do
@@ -94,7 +99,6 @@ withSources action = lookupEnv "DRIFT_SOURCES" >>= \case
             { envOpenAlexKey = key
             , envLog = hPutStrLn stderr . T.unpack . redactApiKeys }
       action (Just (findSources sourceEnv))
-  _ -> putStrLn "sources: disabled" >> action Nothing
 
 -- | The branch and cloud generators for the configured model, or the offline
 -- mock. Configuration errors stop the server at start, not at the first pick.

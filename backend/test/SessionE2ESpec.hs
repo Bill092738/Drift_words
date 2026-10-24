@@ -58,8 +58,9 @@ sourceSpec = describe "M6 server sources" $ do
     withTemporaryDatabase $ \databasePath -> do
       inherited <- getEnvironment
       let logPath = databasePath <> ".log"
+          -- Sources on (the server default), with every other setting kept offline.
           environment = [("DRIFT_SOURCES", "1"), ("OPENALEX_API_KEY", "sentinel-openalex-secret")]
-            <> serverEnvironment Nothing port databasePath inherited
+            <> filter ((/= "DRIFT_SOURCES") . fst) (serverEnvironment Nothing port databasePath inherited)
       withFile logPath WriteMode $ \output -> bracket
         (createProcess (proc executable []) {env = Just environment,
           std_in = NoStream, std_out = UseHandle output, std_err = UseHandle output})
@@ -129,7 +130,7 @@ writingSpec = describe "M7 server writing" $ do
           , ("PATH", "test-toolchain")
           ]
     serverEnvironment (Just "0") 8081 "offline.sqlite" inherited `shouldBe`
-      [("DRIFT_PORT", "8081"), ("DRIFT_DB_PATH", "offline.sqlite"),
+      [("DRIFT_PORT", "8081"), ("DRIFT_DB_PATH", "offline.sqlite"), ("DRIFT_SOURCES", "0"),
        ("DRIFT_WRITING", "0"), ("PATH", "test-toolchain")]
 
   it "defaults to template writing with no model config and replays the entry after restart" $ do
@@ -298,9 +299,11 @@ startServer writing executable port databasePath = do
 
 -- The real process fixture and its regression share this environment builder.
 -- Keep inherited configuration out even when its spelling differs by case.
+-- Source search is on by default in the server, so tests turn it off
+-- explicitly: CI never calls Wikipedia or OpenAlex.
 serverEnvironment :: Maybe String -> Int -> FilePath -> [(String, String)] -> [(String, String)]
 serverEnvironment writing port databasePath inherited =
-  let overrides = [("DRIFT_PORT", show port), ("DRIFT_DB_PATH", databasePath)]
+  let overrides = [("DRIFT_PORT", show port), ("DRIFT_DB_PATH", databasePath), ("DRIFT_SOURCES", "0")]
         <> maybe [] (\value -> [("DRIFT_WRITING", value)]) writing
       offlineVariables = ["DRIFT_CONFIG", "DRIFT_SOURCES", "DRIFT_WRITING", "OPENALEX_API_KEY",
         "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"]
