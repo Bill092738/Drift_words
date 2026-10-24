@@ -4,10 +4,11 @@
 -- Environment:
 --
 -- * @DRIFT_PORT@ (default 8080) and @DRIFT_DB_PATH@ (default drift.sqlite).
--- * @DRIFT_CONFIG@: a model configuration such as config.example.yaml. Its
---   @branches@ role generates the rings, and its optional @embeddings@ role
---   drives divergence selection. Without it the server uses the deterministic
---   offline vocabulary ("Drift.Model.SessionMock"), which needs no model.
+-- * @DRIFT_CONFIG@: a model configuration such as config.gemini.yaml. Its
+--   @branches@ role generates the rings, its optional @embeddings@ role drives
+--   divergence selection, and its optional @cloud@ role makes each session's
+--   starting cloud. Without it the server uses the deterministic offline
+--   vocabulary ("Drift.Model.SessionMock"), which needs no model.
 -- * @DRIFT_PREFETCH@: set to 0 to turn off speculative prefetch of the next
 --   rings (on by default; it costs one extra model call per offered word).
 -- * @DRIFT_STATIC_DIR@: the built frontend to serve at @/@ (default
@@ -20,11 +21,13 @@ import Control.Monad (when)
 import qualified Data.Text as T
 import Drift.Api (api, server)
 import Drift.Model.Config
+import Drift.Model.OpenAICompat (RequestOptions (..))
 import Drift.Model.Provider (ModelProvider (..))
-import Drift.Model.SessionMock (BranchGenerator, mockBranches)
-import Drift.Pipeline.BranchService (closeBranchService, newBranchService)
+import Drift.Model.SessionMock (BranchGenerator, mockBranches, mockCloud)
+import Drift.Pipeline.Cloud (modelCloud)
+import Drift.Pipeline.BranchService (closeBranchService, newBranchService, withParallelPrefetch)
 import Drift.Pipeline.SessionBranches (liveBranches)
-import Drift.Server.SessionActor (newManager, stopManager)
+import Drift.Server.SessionActor (CloudGenerator, newManagerWithCloud, stopManager)
 import Drift.Server.WebSocket (webSocketApp)
 import Drift.Store.SQLite (closeStore, openStore)
 import Network.HTTP.Types (status200, status404)
@@ -49,27 +52,28 @@ main = do
   prefetch <- (/= Just "0") <$> lookupEnv "DRIFT_PREFETCH"
   staticDir <- maybe "../frontend/dist" id <$> lookupEnv "DRIFT_STATIC_DIR"
   frontend <- frontendApp staticDir
-  withGenerator configPath prefetch $ \generator -> do
+  withGenerator configPath prefetch $ \generator cloud -> do
     putStrLn ("drift-server listening on http://localhost:" <> show port)
     putStrLn ("session database: " <> databasePath)
     bracket (openStore databasePath) closeStore $ \store ->
-      bracket (newManager store generator) stopManager $ \manager -> do
+      bracket (newManagerWithCloud store generator cloud) stopManager $ \manager -> do
         let backend = serve api (server manager)
             app request respond = case pathInfo request of
               "api" : _ -> backend request respond
               _ -> frontend request respond
         run port (websocketsOr defaultConnectionOptions (webSocketApp manager) app)
 
--- | The branch generator for the configured model, or the offline mock.
--- Configuration errors stop the server at start, not at the first pick.
-withGenerator :: Maybe FilePath -> Bool -> (BranchGenerator -> IO a) -> IO a
+-- | The branch and cloud generators for the configured model, or the offline
+-- mock. Configuration errors stop the server at start, not at the first pick.
+withGenerator :: Maybe FilePath -> Bool -> (BranchGenerator -> CloudGenerator -> IO a) -> IO a
 withGenerator Nothing _ action = do
   putStrLn "branches: offline mock vocabulary (set DRIFT_CONFIG to use a model)"
-  action mockBranches
+  action mockBranches (pure . mockCloud)
 withGenerator (Just path) prefetch action = do
   config <- loadModelConfig path >>= either (die . (("cannot read " <> path <> ": ") <>) . T.unpack) pure
   branchConfig <- either (die . (("model config " <> path <> ": ") <>) . show) pure (resolveProvider config BranchesRole)
   embeddingConfig <- either (die . (("model config " <> path <> ": ") <>) . show) pure (resolveOptionalProvider config EmbeddingsRole)
+  cloudConfig <- either (die . (("model config " <> path <> ": ") <>) . show) pure (resolveOptionalProvider config CloudRole)
   provider <- createModelProvider branchConfig
   embedder <- case embeddingConfig of
     Nothing -> Nothing <$ putStrLn "embeddings: none (rings keep the model's order)"
@@ -79,14 +83,22 @@ withGenerator (Just path) prefetch action = do
       model <- createModelProvider embeddingProvider
       putStrLn ("embeddings: " <> T.unpack (providerName model))
       pure (embed model)
+  let parallel = concurrentRequests (providerOptions branchConfig)
   -- Names only: the API key is never printed.
   putStrLn
     ( "branches: " <> T.unpack (providerName provider) <> " " <> T.unpack (providerModel branchConfig)
         <> " at " <> T.unpack (providerBaseUrl branchConfig)
-        <> (if prefetch then ", with prefetch" else ", no prefetch")
+        <> (if not prefetch then ", no prefetch" else if parallel then ", with parallel prefetch" else ", with prefetch")
     )
-  bracket (newBranchService provider (providerModel branchConfig) embedder) closeBranchService $ \service ->
-    action (liveBranches prefetch service)
+  cloud <- case cloudConfig of
+    Nothing -> pure (pure . mockCloud) <* putStrLn "cloud: offline words (no cloud role)"
+    Just cloudProvider -> do
+      model <- createModelProvider cloudProvider
+      putStrLn ("cloud: " <> T.unpack (providerName model) <> " " <> T.unpack (providerModel cloudProvider))
+      pure (modelCloud (putStrLn . T.unpack) 20 model (providerModel cloudProvider))
+  let configure = if parallel then withParallelPrefetch else id
+  bracket (configure <$> newBranchService provider (providerModel branchConfig) embedder) closeBranchService $ \service ->
+    action (liveBranches prefetch service) cloud
 
 -- | Serves the built frontend, with index.html for every path that is not a
 -- file. Without a build, it answers with a hint instead.
