@@ -6,6 +6,7 @@ module Drift.Search.Text
   , decodeEntities
   , plainText
   , normalizeKey
+  , normalizeUrl
   , tokens
   , stem
   , normalizeDoi
@@ -72,6 +73,20 @@ plainText = T.unwords . T.words . decodeEntities . stripHtml
 -- | The key for comparing words and titles: NFKC, case folded, trimmed.
 normalizeKey :: Text -> Text
 normalizeKey = T.strip . T.toCaseFold . normalize NFKC
+
+-- | A web URL identity folds only the scheme and host. User info, path,
+-- query and fragment retain their case because it can identify a different
+-- resource. Splitting the authority first also handles URLs without a path.
+normalizeUrl :: Text -> Text
+normalizeUrl raw =
+  let trimmed = T.strip raw
+      (scheme, rest) = T.breakOn "://" trimmed
+   in if T.null rest
+        then trimmed
+        else
+          let (authority, suffix) = T.break (`elem` ("/?#" :: String)) (T.drop 3 rest)
+              (userInfo, hostPort) = T.breakOnEnd "@" authority
+           in T.toLower scheme <> "://" <> userInfo <> T.toLower hostPort <> suffix
 
 -- | Lower-case words, split on anything that is not a letter or digit.
 tokens :: Text -> [Text]

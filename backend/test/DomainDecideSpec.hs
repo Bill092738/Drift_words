@@ -80,9 +80,19 @@ spec = do
     it "accepts a result for an old edge after focus moves" $ do
       admitEntry sibling proposed `shouldBe` Right [EntryWritten (proposed {Entry.entryId = EntryId 1})]
       admitSource sibling (NodeId 2) draft `shouldBe` Right [SourceFound (sourceAt 1 2)]
-    it "rejects a canonically equal URL on the same edge" $ do
+    it "rejects scheme and host case variants of a URL on the same edge" $ do
       let s = apply edge (SourceFound (sourceAt 1 2))
-      rejected (admitSource s (NodeId 2) (draft {Search.url = "  HTTPS://EXAMPLE.ORG/REFERENCE  "}))
+      rejected (admitSource s (NodeId 2) (draft {Search.url = "  HTTPS://EXAMPLE.ORG/reference  "}))
+    forM_
+      [ ("path", "https://example.org/A", "https://example.org/a")
+      , ("query", "https://example.org/?Token=A", "https://example.org/?Token=a")
+      , ("fragment", "https://example.org/#Section", "https://example.org/#section")
+      , ("user info", "https://User@example.org/", "https://user@example.org/")
+      ] $ \(component, firstUrl, secondUrl) ->
+      it ("admits distinct case-sensitive URL " <> component <> " values on the same edge") $ do
+        let s = apply edge (SourceFound ((sourceAt 1 2) {url = firstUrl}))
+        admitSource s (NodeId 2) (draft {Search.url = secondUrl}) `shouldBe`
+          Right [SourceFound ((sourceAt 2 2) {url = secondUrl})]
     it "rejects normalized DOI metadata even when publisher links differ" $ do
       let stored = (sourceAt 1 2) {csl = Just (object ["DOI" .= ("https://doi.org/10.1234/AbC" :: Text.Text)])}
           duplicate = draft {Search.url = "https://publisher.org/other", Search.csl = Just (object ["DOI" .= ("doi:10.1234/abc" :: Text.Text)])}

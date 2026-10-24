@@ -27,7 +27,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Drift.Search.Http (Fetch, FetchError)
 import Drift.Search.OpenAlex (searchOpenAlex)
-import Drift.Search.Text (isWebUrl, normalizeKey)
+import Drift.Search.Text (isWebUrl, normalizeKey, normalizeUrl)
 import Drift.Search.Types (Hit (..), SourceDraft (..), SourceRequest (..))
 import Drift.Search.Wikipedia (searchWikipedia)
 import Drift.Sources.Doi (fetchCsl)
@@ -153,7 +153,7 @@ dedupeKey :: Hit -> Text
 dedupeKey h = case h.hitDoi of
   Just d -> "doi:" <> d
   Nothing
-    | not (T.null h.hitDraft.url) -> "url:" <> normalizeKey h.hitDraft.url
+    | not (T.null h.hitDraft.url) -> "url:" <> normalizeUrl h.hitDraft.url
     | otherwise -> "title:" <> normalizeKey h.hitDraft.title
 
 -- | The last check before a source can reach the desk: a web link and a title.

@@ -18,7 +18,7 @@ import Drift.Domain.Types
 import Drift.Domain.Word (cap, wordKey)
 import Drift.Protocol
 import Drift.Pipeline.Writing (reviseForSource)
-import Drift.Search.Text (normalizeDoi, normalizeKey)
+import Drift.Search.Text (normalizeDoi, normalizeKey, normalizeUrl)
 import Drift.Search.Types (SourceDraft, toSource)
 
 decide :: Session -> Command -> Either Rejection [Event]
@@ -149,7 +149,7 @@ sourceIdentity src = case metadataDoi <|> normalizeDoi src.url of
     | not (Text.null urlKey) -> "url:" <> urlKey
     | otherwise -> "title:" <> normalizeKey src.title
   where
-    urlKey = normalizeKey src.url
+    urlKey = normalizeUrl src.url
     metadataDoi = case src.csl of
       Just (Object fields) -> case KeyMap.lookup "DOI" fields of
         Just (String doi) -> normalizeDoi doi
