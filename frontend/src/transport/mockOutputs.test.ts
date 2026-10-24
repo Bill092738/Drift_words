@@ -1,0 +1,66 @@
+import { describe, expect, it } from 'vitest';
+import { fixtures } from './fixtures.ts';
+import { mockOutputs } from './mockOutputs.ts';
+import { applyEvents, emptySession } from '../store/session.ts';
+
+function stateOf(name: string) {
+  const log = fixtures.get(name);
+  if (log === undefined) throw new Error(`no fixture ${name}`);
+  // Without the recorded outputs, which are what the mock stands in for.
+  return applyEvents(
+    emptySession,
+    log.filter((s) => s.event.type !== 'OutputsReady' && s.event.type !== 'WrappedUp'),
+  );
+}
+
+describe('mockOutputs', () => {
+  const state = stateOf('exploration');
+
+  it('draws the same decision tree as the recorded one', () => {
+    const recorded = fixtures.get('exploration')!.flatMap((s) => (s.event.type === 'OutputsReady' ? [s.event.outputs] : []))[0]!;
+    expect(mockOutputs(state).decisionTree).toBe(recorded.decisionTree);
+  });
+
+  it('lists every entry in order, with the struck one crossed out', () => {
+    const lines = mockOutputs(state)
+      .draft.split('\n')
+      .filter((l) => /^\d+\. /u.test(l));
+    expect(lines).toHaveLength(5);
+    expect(lines.filter((l) => l.includes('~~'))).toHaveLength(1);
+    expect(lines[2]!.startsWith('3. ~~')).toBe(true);
+  });
+
+  it('keeps only promoted, un-struck entries in the final document', () => {
+    const final = mockOutputs(state).final;
+    expect(final.startsWith('# From entropy to flow')).toBe(true);
+    const draftTexts = [...state.entries.values()].map((e) => e.entry.relation);
+    const kept = [...state.entries.values()].filter((e) => !e.struck && e.priority >= 1).map((e) => e.entry.relation);
+    for (const relation of kept) expect(final).toContain(relation.replace(/[.]$/u, ''));
+    expect(draftTexts.length).toBeGreaterThan(kept.length);
+  });
+
+  it('says so when there is nothing yet', () => {
+    const empty = mockOutputs(emptySession);
+    expect(empty.draft).toContain('_No entries yet._');
+    expect(empty.final).toContain('_No entries were kept at high priority._');
+    expect(empty.decisionTree).toBe('```mermaid\nflowchart TD\n```');
+  });
+
+  it('escapes what it prints', () => {
+    const hostile = applyEvents(emptySession, [
+      { seq: 1, atMs: 0, event: { type: 'NodeChosen', node: 1, parent: null, word: 'a]b', origin: 'cloud', fromCandidate: null } },
+      {
+        seq: 2,
+        atMs: 0,
+        event: {
+          type: 'EntryWritten',
+          entry: { entryId: 1, node: 1, relation: '*x*', explanation: '<script>alert(1)</script> [l](http://e)', cites: [] },
+        },
+      },
+    ]);
+    const out = mockOutputs(hostile);
+    expect(out.draft).not.toContain('<script>');
+    expect(out.draft).not.toContain('[l]');
+    expect(out.decisionTree).toContain('n1["a]b"]');
+  });
+});
