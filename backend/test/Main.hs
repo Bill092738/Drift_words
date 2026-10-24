@@ -1,5 +1,6 @@
 module Main (main) where
 
+import qualified BranchServiceSpec
 import qualified BranchesSpec
 import qualified CitationsSpec
 import qualified DomainDecideSpec
@@ -32,5 +33,6 @@ main = hspec $ do
   describe "Writing" WritingSpec.spec
   describe "Model providers" ModelProviderSpec.spec
   describe "Branches" BranchesSpec.spec
+  describe "Branch service" BranchServiceSpec.spec
   describe "Scheduler" SchedulerSpec.spec
   describe "Prefetch" PrefetchSpec.spec

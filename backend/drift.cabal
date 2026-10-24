@@ -30,6 +30,7 @@ library
     Drift.Model.Provider
     Drift.Model.Scheduler
     Drift.Model.SessionMock
+    Drift.Pipeline.BranchService
     Drift.Pipeline.Branches
     Drift.Pipeline.Citations
     Drift.Pipeline.Prefetch
@@ -104,6 +105,7 @@ test-suite drift-test
   hs-source-dirs:   test
   main-is:          Main.hs
   other-modules:
+    BranchServiceSpec
     BranchesSpec
     CitationsSpec
     DomainDecideSpec

@@ -10,6 +10,8 @@ module Drift.Pipeline.Prefetch
   , startPrefetch
   , takePrefetch
   , cancelUnselected
+  , cancelAllPrefetches
+  , waitPrefetch
   , shutdownPrefetchCache
   ) where
 
@@ -17,7 +19,7 @@ import Control.Concurrent.Async (Async)
 import qualified Control.Concurrent.Async as Async
 import Control.Concurrent.STM
 import Control.Exception (SomeException, displayException, mask, try)
-import Control.Monad (void, when)
+import Control.Monad (forM_, void, when)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -119,6 +121,23 @@ cancelUnselected cache selected = do
     let (kept, removed) = Map.partitionWithKey (\key _ -> key == selected) entries
     writeTVar cache.cacheEntries kept
     pure (Map.elems removed)
+  mapM_ cancelEntry discarded
+
+-- | Block until the entry for @key@ has a result, without claiming it.
+-- Returns at once when there is no such entry.
+waitPrefetch :: Ord k => PrefetchCache k v -> k -> IO ()
+waitPrefetch cache key = do
+  found <- atomically (Map.lookup key <$> readTVar cache.cacheEntries)
+  forM_ found $ \entry -> void (atomically (readTMVar entry.entryResult))
+
+-- | Cancel every outstanding entry, for example after a backtrack makes all
+-- predictions obsolete. Unlike 'shutdownPrefetchCache', the cache stays open.
+cancelAllPrefetches :: PrefetchCache k v -> IO ()
+cancelAllPrefetches cache = do
+  discarded <- atomically $ do
+    entries <- readTVar cache.cacheEntries
+    writeTVar cache.cacheEntries Map.empty
+    pure (Map.elems entries)
   mapM_ cancelEntry discarded
 
 shutdownPrefetchCache :: PrefetchCache k v -> IO ()
