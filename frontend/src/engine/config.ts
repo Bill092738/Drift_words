@@ -46,6 +46,8 @@ export const motion = {
 export const quality = {
   /** Device pixel ratio cap. */
   maxResolution: 2,
+  /** World units per cell of the host's CSS dot grid (the desk background). */
+  gridCell: 24,
   antialias: true,
   text: {
     /** Text texture resolution tiers are powers of two within this range. */
