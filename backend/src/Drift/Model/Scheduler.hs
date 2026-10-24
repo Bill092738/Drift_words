@@ -16,12 +16,13 @@ module Drift.Model.Scheduler
   , await
   , cancel
   , shutdown
+  , isAsyncException
   ) where
 
 import Control.Concurrent.Async (Async)
 import qualified Control.Concurrent.Async as Async
 import Control.Concurrent.STM
-import Control.Exception (AsyncException, SomeException, displayException, fromException, try)
+import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, try)
 import Control.Monad (void)
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -169,9 +170,11 @@ execute job = do
             then JobCancelled
             else JobFailed (Text.pack (displayException exception))
 
+-- | True for any asynchronous exception: base's 'ThreadKilled' as well as the
+-- @async@ library's 'Async.AsyncCancelled', which 'Async.cancel' throws.
 isAsyncException :: SomeException -> Bool
 isAsyncException exception =
-  case fromException @AsyncException exception of
+  case fromException @SomeAsyncException exception of
     Just _ -> True
     Nothing -> False
 

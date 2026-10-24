@@ -92,6 +92,7 @@ test-suite drift-test
   ghc-options:      -threaded
   build-depends:
     , aeson
+    , async
     , base
     , bytestring
     , containers

@@ -16,12 +16,13 @@ module Drift.Pipeline.Prefetch
 import Control.Concurrent.Async (Async)
 import qualified Control.Concurrent.Async as Async
 import Control.Concurrent.STM
-import Control.Exception (AsyncException, SomeException, displayException, fromException, mask, try)
+import Control.Exception (SomeException, displayException, mask, try)
 import Control.Monad (void, when)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as Text
+import Drift.Model.Scheduler (isAsyncException)
 
 data PrefetchStart
   = PrefetchStarted
@@ -177,9 +178,3 @@ deleteEntry key expectedId entries =
   case Map.lookup key entries of
     Just entry | entry.entryId == expectedId -> Map.delete key entries
     _ -> entries
-
-isAsyncException :: SomeException -> Bool
-isAsyncException exception =
-  case fromException @AsyncException exception of
-    Just _ -> True
-    Nothing -> False

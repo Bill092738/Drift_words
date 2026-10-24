@@ -2,7 +2,8 @@ module SchedulerSpec (spec) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar
-import Control.Exception (finally)
+import Control.Concurrent.Async (AsyncCancelled (..))
+import Control.Exception (AsyncException (..), ErrorCall (..), finally, toException)
 import Control.Monad (forM, void)
 import Drift.Model.Scheduler
 import System.Timeout (timeout)
@@ -15,6 +16,11 @@ within action = do
 
 spec :: Spec
 spec = describe "model scheduler" $ do
+  it "recognizes base and async-library cancellation as asynchronous exceptions" $ do
+    isAsyncException (toException AsyncCancelled) `shouldBe` True
+    isAsyncException (toException ThreadKilled) `shouldBe` True
+    isAsyncException (toException (ErrorCall "boom")) `shouldBe` False
+
   it "runs queued jobs by priority and preserves FIFO within a priority" $ do
     scheduler <- newScheduler
     gate <- newEmptyMVar
