@@ -5,7 +5,7 @@
 #   make server     run the backend on :8080
 #   make dev        run the frontend dev server (proxies /api to :8080)
 
-.PHONY: protocol check backend-build backend-test frontend-install frontend-check server dev
+.PHONY: protocol check backend-build backend-test backend-restart-test frontend-install frontend-check server dev
 
 protocol:
 	cd backend && cabal run -v0 drift-gen-ts -- ../frontend/src/protocol/generated.ts
@@ -14,8 +14,11 @@ protocol:
 backend-build:
 	cd backend && cabal build all
 
-backend-test:
+backend-test: backend-build
 	cd backend && cabal test all --test-show-details=direct
+
+backend-restart-test: backend-build
+	cd backend && cabal test drift-test --test-options='--match "server process restart" --format=progress'
 
 frontend-install:
 	cd frontend && pnpm install
