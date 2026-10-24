@@ -7,6 +7,7 @@ module Drift.Model.OpenAICompat
   , temperatureFor
   , chatCompletionPayload
   , responsesPayload
+  , httpErrorMessage
   , parseChatCompletion
   , parseResponsesEvent
   , parseEmbeddingResponse
@@ -25,6 +26,7 @@ import Data.List (sortOn)
 import Data.Scientific (toRealFloat)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Text.Encoding (decodeUtf8Lenient)
 import Drift.Model.Provider
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS (tlsManagerSettings)
@@ -69,7 +71,7 @@ generateStream manager settings request onChunk = do
         }
       req = addAuth settings requestWithBody
   withResponse req manager $ \response -> do
-    ensureSuccess (statusCode (responseStatus response))
+    ensureStreamSuccess response
     output <- newIORef T.empty
     consumeSse (responseBody response) $ \jsonBytes ->
       case parseDelta jsonBytes of
@@ -92,7 +94,7 @@ generateResponsesStream manager settings request onChunk = do
         }
       req = addAuth settings requestWithBody
   withResponse req manager $ \response -> do
-    ensureSuccess (statusCode (responseStatus response))
+    ensureStreamSuccess response
     output <- newIORef T.empty
     consumeSse (responseBody response) $ \jsonBytes ->
       case parseResponsesEvent jsonBytes of
@@ -148,7 +150,7 @@ embedTexts manager settings model inputs = do
         }
       req = addAuth settings requestWithBody
   response <- httpLbs req manager
-  ensureSuccess (statusCode (responseStatus response))
+  ensureSuccess (statusCode (responseStatus response)) (LBS.toStrict (LBS.take errorBodyLimit (responseBody response)))
   either (ioError . userError . T.unpack) pure (parseEmbeddingResponse (LBS.toStrict (responseBody response)))
 
 addAuth :: OpenAISettings -> Request -> Request
@@ -160,10 +162,30 @@ addAuth settings request = case openAIApiKey settings of
 trimSlash :: Text -> Text
 trimSlash = T.dropWhileEnd (== '/')
 
-ensureSuccess :: Int -> IO ()
-ensureSuccess code
+-- | How much of an error response body to keep in the error message.
+errorBodyLimit :: Num a => a
+errorBodyLimit = 500
+
+-- | Fails with the status and the start of the response body, which is where
+-- providers explain a 4xx (for example a model that rejects temperature).
+-- Request headers, and so the API key, are never included.
+ensureSuccess :: Int -> BS.ByteString -> IO ()
+ensureSuccess code body
   | code >= 200 && code < 300 = pure ()
-  | otherwise = ioError (userError ("OpenAI-compatible endpoint returned HTTP " <> show code))
+  | otherwise = ioError (userError (httpErrorMessage code body))
+
+-- | 'ensureSuccess' for a streamed response: reads at most the first
+-- 'errorBodyLimit' bytes of the body, only when the status is an error.
+ensureStreamSuccess :: Response BodyReader -> IO ()
+ensureStreamSuccess response = do
+  let code = statusCode (responseStatus response)
+  body <- if code >= 200 && code < 300 then pure BS.empty else LBS.toStrict <$> brReadSome (responseBody response) errorBodyLimit
+  ensureSuccess code body
+
+httpErrorMessage :: Int -> BS.ByteString -> String
+httpErrorMessage code body =
+  let excerpt = T.strip (decodeUtf8Lenient (BS.take errorBodyLimit body))
+   in "OpenAI-compatible endpoint returned HTTP " <> show code <> if T.null excerpt then "" else ": " <> T.unpack excerpt
 
 consumeSse :: BodyReader -> (BS.ByteString -> IO ()) -> IO ()
 consumeSse reader onData = loop BS.empty []

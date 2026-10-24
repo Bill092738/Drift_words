@@ -4,6 +4,7 @@ module ModelProviderSpec (spec) where
 
 import Control.Monad (forM_)
 import Data.Aeson (Value (..))
+import qualified Data.ByteString.Char8 as BSC
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
 import Data.IORef (newIORef, modifyIORef', readIORef)
@@ -11,7 +12,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Drift.Model.Config
 import Drift.Model.Mock
-import Drift.Model.OpenAICompat (chatCompletionPayload, parseChatCompletion, parseEmbeddingResponse, parseSseData, responsesPayload, temperatureFor)
+import Drift.Model.OpenAICompat (chatCompletionPayload, httpErrorMessage, parseChatCompletion, parseEmbeddingResponse, parseSseData, responsesPayload, temperatureFor)
 import Drift.Model.Provider
 import Test.Hspec
 
@@ -68,6 +69,12 @@ spec = do
       field "model" (responsesPayload "default" request) `shouldBe` Just (String "default")
       field "model" (chatCompletionPayload "default" request {genModel = "chosen"}) `shouldBe` Just (String "chosen")
       field "max_tokens" (chatCompletionPayload "default" request {genMaxTokens = 0}) `shouldBe` Nothing
+
+    it "puts the start of the response body into HTTP errors" $ do
+      httpErrorMessage 400 "{\"error\":{\"message\":\"Unsupported parameter: temperature\"}}\n"
+        `shouldBe` "OpenAI-compatible endpoint returned HTTP 400: {\"error\":{\"message\":\"Unsupported parameter: temperature\"}}"
+      httpErrorMessage 502 "" `shouldBe` "OpenAI-compatible endpoint returned HTTP 502"
+      length (httpErrorMessage 500 (BSC.replicate 2000 'x')) `shouldBe` length ("OpenAI-compatible endpoint returned HTTP 500: " :: String) + 500
 
   describe "provider role routing" $ do
     it "resolves a configured role to its provider" $ do
