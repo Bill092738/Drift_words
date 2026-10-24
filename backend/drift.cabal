@@ -20,17 +20,34 @@ library
   exposed-modules:
     Drift.Api
     Drift.Domain.Entries
+    Drift.Model.Config
+    Drift.Model.Mock
+    Drift.Model.OpenAICompat
+    Drift.Model.Provider
+    Drift.Model.Scheduler
+    Drift.Pipeline.Branches
     Drift.Pipeline.Citations
+    Drift.Pipeline.Prefetch
     Drift.Pipeline.Writing
     Drift.Protocol
     Drift.Protocol.Options
   build-depends:
     , aeson             >=2.2  && <2.4
     , aeson-typescript  >=0.6  && <0.7
+    , async             >=2.2  && <2.3
     , base              >=4.20 && <5
+    , bytestring        >=0.10 && <0.13
     , containers        >=0.6  && <0.8
+    , http-client       >=0.7  && <0.8
+    , http-client-tls   >=0.3  && <0.4
+    , http-types        >=0.12 && <0.13
+    , optparse-applicative >=0.18 && <0.20
+    , scientific        >=0.3  && <0.4
     , servant-server    >=0.20 && <0.21
+    , stm               >=2.5  && <2.6
     , text              >=2.0  && <2.2
+    , unicode-transforms >=0.4 && <0.5
+    , yaml              >=0.11 && <0.12
 
 executable drift-server
   import:           shared
@@ -52,19 +69,36 @@ executable drift-gen-ts
     , base
     , drift
 
+executable drift-branches
+  import:           shared
+  hs-source-dirs:   app
+  main-is:          Branches.hs
+  ghc-options:      -threaded
+  build-depends:
+    , base
+    , containers
+    , drift
+    , optparse-applicative
+    , text
+
 test-suite drift-test
   import:           shared
   type:             exitcode-stdio-1.0
   hs-source-dirs:   test
   main-is:          Main.hs
   other-modules:
+    BranchesSpec
     CitationsSpec
     EntriesSpec
+    ModelProviderSpec
+    PrefetchSpec
     ProtocolSpec
+    SchedulerSpec
     WritingSpec
   ghc-options:      -threaded
   build-depends:
     , aeson
+    , async
     , base
     , bytestring
     , containers
@@ -73,4 +107,5 @@ test-suite drift-test
     , filepath
     , hspec       >=2.11 && <2.12
     , QuickCheck  >=2.14 && <2.17
+    , stm
     , text
