@@ -24,6 +24,7 @@ import Control.Concurrent.MVar (MVar, modifyMVar, newMVar)
 import Control.Exception (try)
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.CaseInsensitive as CI
+import Data.Char (isSpace)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.List (sortOn)
 import Data.Map.Strict (Map)
@@ -109,7 +110,7 @@ perform :: HttpConfig -> HC.Manager -> Shared -> HttpRequest -> IO (Either Fetch
 perform cfg manager shared rq = do
   parsed <- try (HC.parseRequest (T.unpack rq.reqUrl))
   case parsed of
-    Left (e :: HC.HttpException) -> pure (Left (Network (T.pack (show e))))
+    Left (e :: HC.HttpException) -> pure (Left (Network (redactApiKeys (T.pack (show e)))))
     Right base -> do
       let host = TE.decodeUtf8 (HC.host base)
           built =
@@ -174,7 +175,19 @@ classify :: HC.HttpException -> FetchError
 classify = \case
   HC.HttpExceptionRequest _ HC.ResponseTimeout -> Timeout
   HC.HttpExceptionRequest _ HC.ConnectionTimeout -> Timeout
-  e -> Network (T.pack (show e))
+  e -> Network (redactApiKeys (T.pack (show e)))
+
+-- | HTTP exceptions include the request URL or a quoted query string. Keep
+-- that diagnostic context, but hide API key values regardless of key casing.
+redactApiKeys :: Text -> Text
+redactApiKeys input
+  | T.toCaseFold (T.take 8 input) == "api_key=" =
+      let (_, rest) = T.break valueEnd (T.drop 8 input)
+       in T.take 8 input <> "[REDACTED]" <> redactApiKeys rest
+  | Just (c, rest) <- T.uncons input = T.cons c (redactApiKeys rest)
+  | otherwise = ""
+  where
+    valueEnd c = c `elem` ['&', '#', '"', '\'', '\\'] || isSpace c
 
 -- | Adds a response to the cache. Expired entries are dropped on every
 -- insert, and if the cache is still over @limit@ the entries that expire

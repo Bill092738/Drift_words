@@ -30,8 +30,10 @@ Real network calls only happen on request:
 
 ```
 cabal run drift-sources -- --live tide moon        # prints SourceFound events, logs on stderr
-DRIFT_LIVE_TESTS=1 cabal test drift-sources        # includes the live test
-cabal test drift-sources                           # offline: saved real responses in test/fixtures
+DRIFT_LIVE_TESTS=1 cabal test drift-test          # includes the live test
+cabal test drift-test                             # offline: saved real responses in test/fixtures
 ```
 
-This is a separate cabal package so it does not edit `drift.cabal` or `test/Main.hs`; its modules follow the layout in TECH_ROADMAP.md section 6 and can be folded into the main package later by moving files.
+Run these commands from `backend/`. Source search is part of the `drift` library;
+`drift-sources` is its CLI executable, backed by `app/Sources.hs`. The source
+specs run in the main `drift-test` suite, with saved responses in `test/fixtures`.
