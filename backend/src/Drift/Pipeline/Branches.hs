@@ -98,8 +98,9 @@ isMark c = generalCategory c `elem` [NonSpacingMark, SpacingCombiningMark, Enclo
 normalizeWord :: Text -> Text
 normalizeWord = T.toCaseFold . normalize NFKC . T.strip
 
--- | Apply loop prevention and stable per-batch de-duplication. Returned words
--- are normalized keys, which keeps downstream IDs and counts deterministic.
+-- | Apply loop prevention and stable per-batch de-duplication. Comparisons use
+-- normalized keys, but words are returned as the model wrote them (trimmed),
+-- keeping the first spelling when a key repeats: "Apollo" stays "Apollo".
 filterCandidates :: BranchContext -> [Text] -> [Text]
 filterCandidates context candidates = reverse accepted
  where
@@ -116,7 +117,7 @@ filterCandidates context candidates = reverse accepted
             && Set.notMember key normalizedChosen
             && Map.findWithDefault 0 key normalizedCounts < cap
             && Set.notMember key seen
-     in if permitted then (Set.insert key seen, key : result) else (seen, result)
+     in if permitted then (Set.insert key seen, T.strip candidate : result) else (seen, result)
 
 -- | Offered-but-unchosen words may recur four times at minimum divergence and
 -- only once at maximum divergence. Clamping makes the pure helper total while

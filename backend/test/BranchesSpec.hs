@@ -35,6 +35,12 @@ spec = do
     it "removes normalized duplicates, chosen words, and exhausted repeats" $ do
       let context = BranchContext "origin" ["root", "origin"] 0.75 (Set.fromList ["APPLE"]) (Map.fromList [("BANANA", repeatCap 0.75)]) 4
       filterCandidates context [" Apple ", "pear", "PEAR", "banana", "plum"] `shouldBe` ["pear", "plum"]
+      filterCandidates context [" Pear ", "pear"] `shouldBe` ["Pear"]
+
+    it "returns words as the model wrote them, keeping the first spelling of a key" $ do
+      let ctx = BranchContext "space" ["space"] 0.5 Set.empty Map.empty 4
+      filterCandidates ctx ["Apollo", "apollo", "DNA"] `shouldBe` ["Apollo", "DNA"]
+      filterCandidates ctx ["Straße", "STRASSE"] `shouldBe` ["Straße"]
 
     it "uses a repeat cap that never increases with divergence" $
       property $ \rawA rawB ->
