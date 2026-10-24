@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ServerMsg, Stamped } from '../protocol/index.ts';
-import { MockTransport } from './mock.ts';
+import { answerDeterministic, MockTransport } from './mock.ts';
 
 const log: Stamped[] = [
   { seq: 1, atMs: 1000, event: { type: 'DivergenceSet', divergence: 0.1 } },
@@ -43,6 +43,18 @@ describe('MockTransport', () => {
     t.close();
     vi.advanceTimersByTime(10_000);
     expect(seqs(got)).toEqual([1]);
+  });
+
+  it('answers commands through respond, numbered after the replayed events', async () => {
+    const got: ServerMsg[] = [];
+    const t = new MockTransport(log, { respond: answerDeterministic });
+    t.subscribe((m) => got.push(m));
+    vi.advanceTimersByTime(0);
+    t.send({ type: 'Strike', entryId: 4 });
+    t.send({ type: 'Pick', candidateId: 1 });
+    await Promise.resolve();
+    const answers = got.flatMap((m) => (m.type === 'Events' ? m.events : [])).slice(1);
+    expect(answers).toEqual([{ seq: 2, atMs: 1000, event: { type: 'EntryStruck', entryId: 4 } }]);
   });
 
   it('hands commands to onCommand with increasing request ids', () => {

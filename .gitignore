@@ -24,6 +24,8 @@ dist/
 .env.*
 !.env.example
 config.yaml
+api-config.txt
+*-key.dpapi
 
 # Editors and OS
 .vscode/

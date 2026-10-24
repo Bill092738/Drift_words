@@ -20,10 +20,20 @@ library
   exposed-modules:
     Drift.Api
     Drift.Domain.Decide
+    Drift.Domain.Entries
     Drift.Domain.State
     Drift.Domain.Types
     Drift.Domain.Word
+    Drift.Model.Config
+    Drift.Model.Mock
+    Drift.Model.OpenAICompat
+    Drift.Model.Provider
+    Drift.Model.Scheduler
     Drift.Model.SessionMock
+    Drift.Pipeline.Branches
+    Drift.Pipeline.Citations
+    Drift.Pipeline.Prefetch
+    Drift.Pipeline.Writing
     Drift.Protocol
     Drift.Protocol.Options
     Drift.Server.SessionActor
@@ -32,21 +42,27 @@ library
   build-depends:
     , aeson             >=2.2  && <2.4
     , aeson-typescript  >=0.6  && <0.7
-    , async
+    , async             >=2.2  && <2.3
     , base              >=4.20 && <5
-    , bytestring
-    , containers
+    , bytestring        >=0.10 && <0.13
+    , containers        >=0.6  && <0.8
+    , http-client       >=0.7  && <0.8
+    , http-client-tls   >=0.3  && <0.4
+    , http-types        >=0.12 && <0.13
+    , optparse-applicative >=0.18 && <0.20
+    , scientific        >=0.3  && <0.4
     , servant-server    >=0.20 && <0.21
     , sqlite-simple
-    , stm
+    , stm               >=2.5  && <2.6
     , text              >=2.0  && <2.2
     , time
     , transformers
-    , unicode-transforms
+    , unicode-transforms >=0.4 && <0.5
     , wai
     , wai-websockets
     , warp              >=3.4  && <3.5
     , websockets
+    , yaml              >=0.11 && <0.12
 
 executable drift-server
   import:           shared
@@ -70,20 +86,39 @@ executable drift-gen-ts
     , base
     , drift
 
+executable drift-branches
+  import:           shared
+  hs-source-dirs:   app
+  main-is:          Branches.hs
+  ghc-options:      -threaded
+  build-depends:
+    , base
+    , containers
+    , drift
+    , optparse-applicative
+    , text
+
 test-suite drift-test
   import:           shared
   type:             exitcode-stdio-1.0
   hs-source-dirs:   test
   main-is:          Main.hs
   other-modules:
+    BranchesSpec
+    CitationsSpec
     DomainDecideSpec
     DomainPropertySpec
     DomainReplaySpec
+    EntriesSpec
+    ModelProviderSpec
+    PrefetchSpec
     ProtocolSpec
+    SchedulerSpec
     ServerSpec
     SessionActorSpec
     SessionE2ESpec
     StoreSpec
+    WritingSpec
   ghc-options:      -threaded
   build-depends:
     , aeson
