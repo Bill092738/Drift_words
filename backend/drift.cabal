@@ -19,12 +19,16 @@ library
   hs-source-dirs:   src
   exposed-modules:
     Drift.Api
+    Drift.Domain.Entries
+    Drift.Pipeline.Citations
+    Drift.Pipeline.Writing
     Drift.Protocol
     Drift.Protocol.Options
   build-depends:
     , aeson             >=2.2  && <2.4
     , aeson-typescript  >=0.6  && <0.7
     , base              >=4.20 && <5
+    , containers        >=0.6  && <0.8
     , servant-server    >=0.20 && <0.21
     , text              >=2.0  && <2.2
 
@@ -53,12 +57,17 @@ test-suite drift-test
   type:             exitcode-stdio-1.0
   hs-source-dirs:   test
   main-is:          Main.hs
-  other-modules:    ProtocolSpec
+  other-modules:
+    CitationsSpec
+    EntriesSpec
+    ProtocolSpec
+    WritingSpec
   ghc-options:      -threaded
   build-depends:
     , aeson
     , base
     , bytestring
+    , containers
     , directory
     , drift
     , filepath
