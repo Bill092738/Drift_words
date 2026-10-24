@@ -27,7 +27,7 @@ stamped = zipWith (\n e -> Stamped n 1700000000000 e) [1 ..]
 
 fixtureLog :: FilePath -> IO [Stamped]
 fixtureLog name = do
-  raw <- LBS.readFile ("../../protocol/fixtures/" <> name)
+  raw <- LBS.readFile ("../protocol/fixtures/" <> name)
   pure [s | l <- LBS8.lines raw, Just s <- [decode l :: Maybe Stamped]]
 
 csl :: FilePath -> IO Value

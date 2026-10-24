@@ -2,11 +2,14 @@ module Main (main) where
 
 import qualified BranchServiceSpec
 import qualified BranchesSpec
+import qualified CiteSpec
 import qualified CitationsSpec
 import qualified DomainDecideSpec
 import qualified DomainPropertySpec
 import qualified DomainReplaySpec
+import qualified DraftSpec
 import qualified EntriesSpec
+import qualified FinalSpec
 import qualified ModelProviderSpec
 import qualified PrefetchSpec
 import qualified ProtocolSpec
@@ -16,6 +19,7 @@ import qualified SessionActorSpec
 import qualified SessionE2ESpec
 import qualified StoreSpec
 import Test.Hspec (describe, hspec)
+import qualified TreeSpec
 import qualified WritingSpec
 
 main :: IO ()
@@ -36,3 +40,7 @@ main = hspec $ do
   describe "Branch service" BranchServiceSpec.spec
   describe "Scheduler" SchedulerSpec.spec
   describe "Prefetch" PrefetchSpec.spec
+  describe "Decision tree" TreeSpec.spec
+  describe "Citations in outputs" CiteSpec.spec
+  describe "Draft" DraftSpec.spec
+  describe "Final document" FinalSpec.spec

@@ -28,7 +28,7 @@ style' = either (\e -> fail ("APA style does not parse: " <> T.unpack e)) pure a
 
 fixtureLog :: IO [Stamped]
 fixtureLog = do
-  raw <- LBS.readFile "../../protocol/fixtures/exploration.jsonl"
+  raw <- LBS.readFile "../protocol/fixtures/exploration.jsonl"
   pure [s | l <- LBS8.lines raw, Just s <- [decode l :: Maybe Stamped]]
 
 -- | Entries 1, 4 and 5 were promoted, entry 3 was struck, entry 2 was left alone.

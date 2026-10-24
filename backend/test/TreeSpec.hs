@@ -15,7 +15,7 @@ import Test.Hspec
 -- | The events of a protocol fixture, oldest first.
 fixtureEvents :: FilePath -> IO [Event]
 fixtureEvents name = do
-  raw <- LBS.readFile ("../../protocol/fixtures/" <> name)
+  raw <- LBS.readFile ("../protocol/fixtures/" <> name)
   pure [s.event | l <- LBS.lines raw, Just s <- [decode l :: Maybe Stamped]]
 
 chosen :: Int -> Maybe Int -> Text -> Event

@@ -3,6 +3,7 @@ name:               drift
 version:            0.1.0.0
 synopsis:           Backend for Driftwords, a thinking workbench
 build-type:         Simple
+extra-source-files: data/apa.csl
 
 common shared
   default-language: GHC2021
@@ -30,6 +31,10 @@ library
     Drift.Model.Provider
     Drift.Model.Scheduler
     Drift.Model.SessionMock
+    Drift.Output.Cite
+    Drift.Output.Draft
+    Drift.Output.Final
+    Drift.Output.Tree
     Drift.Pipeline.BranchService
     Drift.Pipeline.Branches
     Drift.Pipeline.Citations
@@ -47,7 +52,9 @@ library
     , async             >=2.2  && <2.3
     , base              >=4.20 && <5
     , bytestring        >=0.10 && <0.13
+    , citeproc          >=0.14 && <0.15
     , containers        >=0.6  && <0.8
+    , file-embed        >=0.0.15 && <0.1
     , http-client       >=0.7  && <0.8
     , http-client-tls   >=0.3  && <0.4
     , http-types        >=0.12 && <0.13
@@ -114,11 +121,14 @@ test-suite drift-test
   other-modules:
     BranchServiceSpec
     BranchesSpec
+    CiteSpec
     CitationsSpec
     DomainDecideSpec
     DomainPropertySpec
     DomainReplaySpec
+    DraftSpec
     EntriesSpec
+    FinalSpec
     ModelProviderSpec
     PrefetchSpec
     ProtocolSpec
@@ -127,6 +137,7 @@ test-suite drift-test
     SessionActorSpec
     SessionE2ESpec
     StoreSpec
+    TreeSpec
     WritingSpec
   ghc-options:      -threaded
   build-depends:
@@ -134,6 +145,7 @@ test-suite drift-test
     , async
     , base
     , bytestring
+    , citeproc
     , containers
     , directory
     , drift
