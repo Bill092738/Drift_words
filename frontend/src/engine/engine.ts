@@ -17,9 +17,6 @@ import { PerfOverlay } from './perf.ts';
 import { LAYERS, Scene } from './scene.ts';
 import { SpringImpl } from './spring.ts';
 
-const prefersDark = (): boolean =>
-  typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches;
-
 /** The renderer that is actually in use. WebGL reports its version, so a WebGL1 fallback is visible. */
 function rendererLabel(renderer: Application['renderer']): string {
   if (renderer.name !== 'webgl') return renderer.name;
@@ -42,13 +39,17 @@ export const createEngine: CreateEngine = async (host, options = {}) => {
     resolution: Math.min(window.devicePixelRatio || 1, maxResolution),
     autoDensity: true,
     antialias: quality.antialias,
-    background: prefersDark() ? 0x151517 : 0xf6f5f2,
+    // Transparent: the desk color and dot grid are CSS on the host, so they
+    // follow the page theme (including live dark mode changes).
+    backgroundAlpha: 0,
   });
   host.appendChild(app.canvas);
   app.canvas.style.touchAction = 'none';
   app.canvas.style.display = 'block';
 
   const camera = new CameraImpl();
+  // Size the camera now, so the viewport is right before the first frame.
+  camera.resize(app.screen.width, app.screen.height);
   const scene = new Scene();
   const overlay = perfOverlay ? new PerfOverlay(host, rendererLabel(app.renderer)) : null;
 
@@ -175,6 +176,9 @@ export const createEngine: CreateEngine = async (host, options = {}) => {
     const c = camera.center;
     world.scale.set(z);
     world.position.set(app.screen.width / 2 - c.x * z, app.screen.height / 2 - c.y * z);
+    // Move the host's CSS dot grid with the world.
+    host.style.backgroundSize = `${quality.gridCell * z}px ${quality.gridCell * z}px`;
+    host.style.backgroundPosition = `${world.position.x}px ${world.position.y}px`;
     scene.cull(camera.viewport);
     logicEnd = performance.now();
   });

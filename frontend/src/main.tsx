@@ -4,7 +4,7 @@ import { App } from './App.tsx';
 import { EventLogView } from './dev/EventLogView.tsx';
 import './styles.css';
 
-// Loaded on demand so Pixi stays out of the initial bundle.
+// The playground is a dev page; load it on demand.
 const Playground = lazy(() =>
   import('./playground/Playground.tsx').then((m) => ({ default: m.Playground })),
 );
