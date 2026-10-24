@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { rng } from '../transport/wordbank.ts';
-import { CHILD_DISTANCE, cloudLayout, distance, MIN_NODE_GAP, placeChild, ringAngle } from './layout.ts';
+import {
+  CHILD_DISTANCE,
+  cloudLayout,
+  distance,
+  MIN_NODE_GAP,
+  placeChild,
+  placeSource,
+  ringAngle,
+  SOURCE_GAP,
+  SOURCE_MAX_TILT,
+  SOURCE_NODE_GAP,
+  SOURCE_SIDE,
+} from './layout.ts';
 
 describe('cloudLayout', () => {
   it('is deterministic and keeps words apart', () => {
@@ -43,5 +55,39 @@ describe('placeChild', () => {
       expect(occupied.every((o) => distance(o, pos) >= MIN_NODE_GAP - 1e-6)).toBe(true);
       occupied.push(pos);
     }
+  });
+});
+
+describe('placeSource', () => {
+  const parent = { x: 0, y: 0 };
+  const node = { x: CHILD_DISTANCE, y: 0 };
+
+  it('lands behind its edge, off the line, slightly tilted', () => {
+    const { pos, angle } = placeSource(node, parent, [parent, node], [], rng(1));
+    expect(pos.x).toBeLessThan(node.x);
+    expect(pos.x).toBeGreaterThan(parent.x);
+    expect(Math.abs(pos.y)).toBeCloseTo(SOURCE_SIDE);
+    expect(Math.abs(angle)).toBeLessThanOrEqual(SOURCE_MAX_TILT);
+  });
+
+  it('is deterministic for a seed', () => {
+    expect(placeSource(node, parent, [], [], rng(4))).toEqual(placeSource(node, parent, [], [], rng(4)));
+  });
+
+  it('keeps clear of nodes and other sources as they pile up', () => {
+    const nodes = [parent, node];
+    const sources: { x: number; y: number }[] = [];
+    const random = rng(2);
+    for (let i = 0; i < 12; i++) {
+      const { pos } = placeSource(node, parent, nodes, sources, random);
+      expect(nodes.every((o) => distance(o, pos) >= SOURCE_NODE_GAP)).toBe(true);
+      expect(sources.every((o) => distance(o, pos) >= SOURCE_GAP)).toBe(true);
+      sources.push(pos);
+    }
+  });
+
+  it('places a root source below its node', () => {
+    const { pos } = placeSource(parent, null, [parent], [], rng(3));
+    expect(pos.y).toBeGreaterThan(0);
   });
 });

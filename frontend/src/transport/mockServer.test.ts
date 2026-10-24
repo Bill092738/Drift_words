@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Event, ServerMsg } from '../protocol/index.ts';
 import { applyEvents, emptySession, type SessionState } from '../store/session.ts';
-import { isSingleWord, MockServer, repeatCap } from './mockServer.ts';
+import { isSingleWord, MockServer, mockSource, repeatCap } from './mockServer.ts';
+import { rng } from './wordbank.ts';
 
 function harness(options = {}) {
   const server = new MockServer({ seed: 1, notes: false, ...options });
@@ -119,5 +120,18 @@ describe('isSingleWord', () => {
     expect(isSingleWord('two words')).toBe(false);
     expect(isSingleWord('')).toBe(false);
     expect(isSingleWord('x'.repeat(41))).toBe(false);
+  });
+});
+
+describe('mockSource', () => {
+  it('mixes every kind, labels non-wiki sources as mock data, and gives images an offline thumbnail', () => {
+    const random = rng(3);
+    const sources = Array.from({ length: 200 }, () => mockSource('tide', 'moon', random));
+    expect(new Set(sources.map((s) => s.kind))).toEqual(new Set(['webPage', 'article', 'paper', 'pdf', 'image', 'audio']));
+    for (const s of sources) {
+      if (s.kind !== 'webPage') expect(s.site).toBe('Offline mock');
+      if (s.kind === 'image') expect(s.thumbnailUrl).toMatch(/^data:image\/svg\+xml/);
+      else expect(s.thumbnailUrl).toBeNull();
+    }
   });
 });

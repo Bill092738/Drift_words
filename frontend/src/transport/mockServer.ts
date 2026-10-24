@@ -7,7 +7,9 @@ import type {
   NodeId,
   Origin,
   ServerMsg,
+  Source,
   SourceId,
+  SourceKind,
   Stamped,
 } from '../protocol/index.ts';
 import { answerDeterministic } from './mock.ts';
@@ -203,25 +205,12 @@ export class MockServer implements Transport {
     this.later(900 + this.random() * 600, () =>
       this.emit([{ type: 'EntryWritten', entry: { entryId, node, relation, explanation, cites: [] } }]),
     );
-    if (this.random() < 0.5) {
+    if (this.random() < 0.6) {
       const sourceId: SourceId = this.nextSource++;
-      const title = capitalize(to);
-      const url = `https://en.wikipedia.org/wiki/${encodeURIComponent(title)}`;
+      const source = { sourceId, node, ...mockSource(from, to, this.random) };
       this.later(1800 + this.random() * 1500, () =>
         this.emit([
-          {
-            type: 'SourceFound',
-            source: {
-              sourceId,
-              node,
-              kind: 'webPage',
-              title,
-              site: 'Wikipedia',
-              url,
-              thumbnailUrl: null,
-              csl: { type: 'entry-encyclopedia', title, 'container-title': 'Wikipedia', URL: url },
-            },
-          },
+          { type: 'SourceFound', source },
           { type: 'EntryRevised', entry: { entryId, node, relation, explanation, cites: [sourceId] } },
         ]),
       );
@@ -249,4 +238,68 @@ export class MockServer implements Transport {
     }, ms);
     this.timers.add(t);
   }
+}
+
+const CSL_TYPES: Record<SourceKind, string> = {
+  article: 'webpage',
+  paper: 'article-journal',
+  pdf: 'report',
+  webPage: 'entry-encyclopedia',
+  image: 'graphic',
+  audio: 'song',
+};
+
+/** Mostly web pages, like real search results, with every other kind mixed in. */
+const MOCK_KINDS: readonly SourceKind[] = ['webPage', 'webPage', 'webPage', 'article', 'paper', 'pdf', 'image', 'audio'];
+
+/**
+ * A placeholder source for the edge `from` to `to`. Everything is clearly
+ * labelled as coming from the offline mock, so it is never taken for a real
+ * reference. Images get a generated thumbnail, so they work offline too.
+ */
+export function mockSource(from: string, to: string, random: () => number): Omit<Source, 'sourceId' | 'node'> {
+  const kind = MOCK_KINDS[Math.floor(random() * MOCK_KINDS.length)] ?? 'webPage';
+  const title = capitalize(to);
+  if (kind === 'webPage') {
+    const url = `https://en.wikipedia.org/wiki/${encodeURIComponent(title)}`;
+    return {
+      kind,
+      title,
+      site: 'Wikipedia',
+      url,
+      thumbnailUrl: null,
+      csl: { type: 'entry-encyclopedia', title, 'container-title': 'Wikipedia', URL: url },
+    };
+  }
+  const site = 'Offline mock';
+  const url = `https://example.org/mock/${kind}/${encodeURIComponent(to.toLowerCase())}`;
+  const titles: Record<Exclude<SourceKind, 'webPage'>, string> = {
+    article: `How ${from} leads to ${to}`,
+    paper: `On ${from} and ${to}: a placeholder study`,
+    pdf: `${capitalize(from)} and ${to} (placeholder report)`,
+    image: `${title}, a placeholder picture`,
+    audio: `Sounds of ${to}`,
+  };
+  const t = titles[kind];
+  return {
+    kind,
+    title: t,
+    site,
+    url,
+    thumbnailUrl: kind === 'image' ? placeholderThumbnail(to) : null,
+    csl: { type: CSL_TYPES[kind], title: t, publisher: site, URL: url },
+  };
+}
+
+/** A flat landscape as an SVG data URL, tinted by the word. */
+function placeholderThumbnail(word: string): string {
+  let h = 0;
+  for (const ch of word) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="120" viewBox="0 0 160 120">` +
+    `<rect width="160" height="120" fill="hsl(${h} 55% 82%)"/>` +
+    `<circle cx="118" cy="34" r="14" fill="hsl(${(h + 40) % 360} 80% 70%)"/>` +
+    `<path d="M0 120 L50 58 L82 92 L104 72 L160 120 Z" fill="hsl(${h} 35% 45%)"/>` +
+    `</svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
