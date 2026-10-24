@@ -32,9 +32,10 @@ import System.Directory
   , removeFile, removePathForcibly )
 import System.Environment (getEnvironment, lookupEnv)
 import System.FilePath ((</>), isAbsolute, takeDirectory)
-import System.IO (hClose, openTempFile)
+import System.IO (IOMode (ReadWriteMode), hClose, openFile, openTempFile)
+import System.Info (os)
 import System.Process
-  ( CreateProcess (..), ProcessHandle, StdStream (NoStream), createProcess
+  ( CreateProcess (..), ProcessHandle, StdStream (UseHandle), createProcess
   , getProcessExitCode, proc, readCreateProcessWithExitCode, terminateProcess
   , waitForProcess )
 import System.Exit (ExitCode (..))
@@ -139,16 +140,23 @@ withServer executable port databasePath action =
 startServer :: FilePath -> Int -> FilePath -> IO ProcessHandle
 startServer executable port databasePath = do
   inherited <- getEnvironment
+  -- Point stdio at the null device rather than closing it (NoStream). On
+  -- POSIX a closed stdout lets the child's runtime reuse fd 1 for an internal
+  -- pipe, so the server's startup message corrupts its IO manager and it never
+  -- starts listening.
+  null' <- openFile nullDevice ReadWriteMode
   let overrides = [("DRIFT_PORT", show port), ("DRIFT_DB_PATH", databasePath)]
       environment = overrides <> filter ((`notElem` map fst overrides) . fst) inherited
       process = (proc executable [])
         { env = Just environment
-        , std_in = NoStream
-        , std_out = NoStream
-        , std_err = NoStream
+        , std_in = UseHandle null'
+        , std_out = UseHandle null'
+        , std_err = UseHandle null'
         }
   (_, _, _, handle) <- createProcess process
   pure handle
+  where
+    nullDevice = if os == "mingw32" then "NUL" else "/dev/null"
 
 stopServer :: ProcessHandle -> IO ()
 stopServer handle = do
