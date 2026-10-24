@@ -1,41 +1,29 @@
 import { useEffect, useRef, useState } from 'react';
-import { type Engine, createEngine } from '../engine/index.ts';
+import { type Engine, advanceOrbit, createDrift, createEngine, orbitPoint } from '../engine/index.ts';
+import { type BenchmarkResult, describeBenchmark, runBenchmark } from './benchmark.ts';
 import './playground.css';
+import { SCENES, type SceneKind, generateScene } from './scenes.ts';
 import { type Tile, createTile } from './tile.ts';
 
-const COUNTS = [50, 500, 2000] as const;
-const SYLLABLES = ['dri', 'ft', 'wor', 'ra', 'lo', 'mi', 'san', 'tu', 'ne', 'qua', 'bel', 'ion'];
-const CJK = ['漂流', '词语', '海', '光', '记忆'];
+type RendererChoice = 'auto' | 'webgl';
 
-/** Small deterministic PRNG so a scene looks the same on every load. */
-function mulberry32(seed: number): () => number {
-  let a = seed;
-  return () => {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function makeWord(rand: () => number): string {
-  if (rand() < 0.08) return CJK[Math.floor(rand() * CJK.length)]!;
-  const n = 1 + Math.floor(rand() * 3);
-  let s = '';
-  for (let i = 0; i < n; i++) s += SYLLABLES[Math.floor(rand() * SYLLABLES.length)]!;
-  return s;
-}
+const initialRenderer = (): RendererChoice =>
+  new URLSearchParams(location.search).get('renderer') === 'webgl' ? 'webgl' : 'auto';
 
 /**
- * M3 developer page: a plain scene of placeholder tiles for trying the desk
- * engine. Open it at /playground.
+ * M3 developer page: scenes of placeholder tiles for trying the desk engine.
+ * Open it at /playground. The performance overlay is on; `?renderer=webgl`
+ * (or the selector) skips WebGPU to exercise the WebGL path.
  */
 export function Playground() {
   const hostRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<Engine | null>(null);
-  const [count, setCount] = useState<number>(50);
+  const benchmarking = useRef(false);
+  const [kind, setKind] = useState<SceneKind>('small');
+  const [renderer, setRenderer] = useState<RendererChoice>(initialRenderer);
   const [status, setStatus] = useState('starting engine…');
   const [last, setLast] = useState('no intent yet');
+  const [bench, setBench] = useState('');
 
   useEffect(() => {
     const host = hostRef.current;
@@ -44,8 +32,9 @@ export function Playground() {
     let engine: Engine | null = null;
     let offFrame = (): void => {};
     let offIntent = (): void => {};
+    const tiles = new Map<string, Tile>();
 
-    void createEngine(host).then((e) => {
+    void createEngine(host, { perfOverlay: true, preferWebGPU: renderer === 'auto' }).then((e) => {
       // StrictMode mounts twice; the first engine may finish after its effect was cleaned up.
       if (cancelled) {
         e.destroy();
@@ -54,14 +43,34 @@ export function Playground() {
       engine = e;
       engineRef.current = e;
 
-      const rand = mulberry32(7);
-      const half = Math.sqrt(count) * 90;
-      const tiles = new Map<string, Tile>();
-      for (let i = 0; i < count; i++) {
-        const id = `w${i}`;
-        const tile = createTile(id, makeWord(rand), (rand() * 2 - 1) * half, (rand() * 2 - 1) * half);
-        tiles.set(id, tile);
+      type Mover = { tile: Tile; update: (time: number, dt: number) => void };
+      const movers: Mover[] = [];
+      const drift = createDrift({ seed: 11 });
+      for (const spec of generateScene(kind)) {
+        const moving = spec.motion.kind !== 'static';
+        const tile = createTile(e, spec.id, spec.label, spec.x, spec.y, moving);
+        tiles.set(spec.id, tile);
         e.add('words', tile);
+        const m = spec.motion;
+        if (m.kind === 'drift') {
+          movers.push({
+            tile,
+            update: (time) => {
+              const o = drift(m.phase, time);
+              tile.place(spec.x + o.x, spec.y + o.y);
+            },
+          });
+        } else if (m.kind === 'orbit') {
+          let angle = m.angle;
+          movers.push({
+            tile,
+            update: (_time, dt) => {
+              angle = advanceOrbit(angle, m.speed, dt);
+              const p = orbitPoint(m.center, m.radius, angle);
+              tile.place(p.x, p.y);
+            },
+          });
+        }
       }
 
       let selected: Tile | undefined;
@@ -75,21 +84,25 @@ export function Playground() {
         selected = tiles.get(intent.id);
         selected?.setSelected(true);
         setLast(`${intent.type} ${intent.id}`);
-        if (intent.type === 'select' && selected !== undefined) {
+        if (intent.type === 'select' && selected !== undefined && !benchmarking.current) {
           const b = selected.bounds();
           e.camera.glideTo({ x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 });
         }
       });
 
+      const reducedQuery = matchMedia('(prefers-reduced-motion: reduce)');
       let acc = 0;
-      offFrame = e.onFrame(({ dt }) => {
+      offFrame = e.onFrame(({ time, dt }) => {
+        // With reduced motion the desk holds still; drifting and orbiting are decoration.
+        if (!reducedQuery.matches) for (const m of movers) m.update(time, dt);
         acc += dt;
         if (acc < 0.2) return;
         acc = 0;
         const { center, zoom } = e.camera;
-        const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const tiers = new Set<number>();
+        for (const t of tiles.values()) tiers.add(t.textTier());
         setStatus(
-          `${count} tiles · zoom ${zoom.toFixed(2)} · center (${center.x.toFixed(0)}, ${center.y.toFixed(0)}) · reduced motion ${reduced ? 'on' : 'off'}`,
+          `${tiles.size} tiles (${movers.length} moving) · zoom ${zoom.toFixed(2)} · center (${center.x.toFixed(0)}, ${center.y.toFixed(0)}) · text tiers [${[...tiers].sort((a, b) => a - b).join(', ')}] · reduced motion ${reducedQuery.matches ? 'on' : 'off'}`,
         );
       });
     });
@@ -100,8 +113,20 @@ export function Playground() {
       offIntent();
       engineRef.current = null;
       engine?.destroy();
+      tiles.clear();
     };
-  }, [count]);
+  }, [kind, renderer]);
+
+  const onBenchmark = (): void => {
+    const canvas = hostRef.current?.querySelector('canvas');
+    if (!canvas || benchmarking.current) return;
+    benchmarking.current = true;
+    setBench('running for 10 s…');
+    void runBenchmark(canvas).then((r: BenchmarkResult) => {
+      benchmarking.current = false;
+      setBench(describeBenchmark(r));
+    });
+  };
 
   return (
     <div className="playground">
@@ -109,20 +134,36 @@ export function Playground() {
       <div className="bar">
         <strong>Desk engine playground</strong>
         <label>
-          Tiles{' '}
-          <select value={count} onChange={(e) => setCount(Number(e.target.value))}>
-            {COUNTS.map((n) => (
-              <option key={n}>{n}</option>
+          Scene{' '}
+          <select value={kind} onChange={(e) => setKind(e.target.value as SceneKind)}>
+            {(Object.keys(SCENES) as SceneKind[]).map((k) => (
+              <option key={k} value={k}>
+                {SCENES[k].label}
+              </option>
             ))}
+          </select>
+        </label>
+        <label>
+          Renderer{' '}
+          <select value={renderer} onChange={(e) => setRenderer(e.target.value as RendererChoice)}>
+            <option value="auto">auto (WebGPU first)</option>
+            <option value="webgl">WebGL only</option>
           </select>
         </label>
         <button onClick={() => engineRef.current?.camera.glideTo({ x: 0, y: 0 }, 1)}>
           Reset view
         </button>
+        <button onClick={onBenchmark}>Run 10 s benchmark</button>
         <span className="muted">drag to pan · wheel / pinch to zoom · tap to select</span>
       </div>
       <div className="status">
         {status} · last: {last}
+        {bench !== '' && (
+          <>
+            <br />
+            benchmark: {bench}
+          </>
+        )}
       </div>
     </div>
   );
