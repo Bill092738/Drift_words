@@ -7,6 +7,7 @@ module Drift.Server.SessionActor
   ( BranchGenerator, EntryWriter, SourceSearch, Pipelines (..), Manager, Subscription
   , newManager, newManagerWith, createManagedSession, subscribeSession
   , newManagerWithAppendObserver, subscribeSessionWithJoinObserver
+  , newManagerWithSourceWait
   , sourceConcurrency, sourceQueueCapacity, sourceWaitMicros
   , submit, receive, unsubscribe, stopManager
   ) where
@@ -46,6 +47,14 @@ data Pipelines = Pipelines
 newManagerWith :: Store -> Pipelines -> IO Manager
 newManagerWith store pipelines = createManager store pipelines (\_ _ _ -> pure ())
 
+-- | Test seam for deterministic deadline delivery. Production always uses
+-- 'newManagerWith', whose wait remains the fixed 'sourceWaitMicros'. The wait
+-- runs in the owned timer worker, never in the actor or source pool.
+newManagerWithSourceWait :: Store -> Pipelines -> IO () -> IO Manager
+newManagerWithSourceWait store pipelines sourceWait = do
+  manager <- newManagerWith store pipelines
+  pure manager {managerSourceWait = sourceWait}
+
 createManager :: Store -> Pipelines -> (SessionId -> [Event] -> Either StoreException () -> IO ()) -> IO Manager
 createManager store pipelines observer = mask $ \_ -> do
   registry <- newMVar (Running Map.empty)
@@ -56,7 +65,7 @@ createManager store pipelines observer = mask $ \_ -> do
       workers <- replicateM sourceConcurrency $ asyncWithUnmask $ \unmask ->
         unmask (forever (atomically (readTBQueue queue) >>= id))
       pure (Just (SourceRuntime queue workers))
-  pure (Manager store pipelines registry observer runtime)
+  pure (Manager store pipelines registry observer runtime (threadDelay sourceWaitMicros))
 
 -- | One shared queue/pool per server, including work from different sessions.
 -- The queue contains closures, never durable jobs; a full queue drops newest.
@@ -73,6 +82,7 @@ data Manager = Manager
   , managerRegistry :: MVar Registry
   , managerAppendObserver :: SessionId -> [Event] -> Either StoreException () -> IO ()
   , managerSourceRuntime :: Maybe SourceRuntime
+  , managerSourceWait :: IO ()
   }
 
 data Registry = Running (Map.Map SessionId Actor) | Stopped (Async ())
@@ -401,7 +411,7 @@ startActor manager sid history = do
             if full then pure False else writeTBQueue queue job >> pure True
           if accepted then do
             timer <- async $ do
-              threadDelay sourceWaitMicros
+              manager.managerSourceWait
               atomically (writeTQueue inbox (BeginWriting target))
             pure state {stateWorkers = timer : state.stateWorkers}
           else do

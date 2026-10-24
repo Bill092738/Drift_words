@@ -18,7 +18,7 @@ import Drift.Domain.State (replay)
 import Drift.Domain.Entries (EntryState (..))
 import Drift.Domain.Types
 import Drift.Pipeline.Writing (WritingInput (..), templateEntry)
-import Drift.Search.Types (SourceDraft (..))
+import Drift.Search.Types (SourceDraft (..), SourceRequest (..))
 import Drift.Model.SessionMock (mockBranches, mockCloud)
 import Drift.Protocol
 import Drift.Server.SessionActor
@@ -389,12 +389,17 @@ spec = describe "Session actor" $ do
     it "includes sources completed before the writer snapshot" $ do
       snapshots <- newTQueueIO
       let writer input = atomically (writeTQueue snapshots input) >> templateEntry input
-      withSourceGates writer $ \_ _ manager calls -> do
+      -- Hold deadline delivery behind STM, so source completion (rather than
+      -- scheduler speed within 250ms) is the only way to start this writer.
+      let makeManager store pipelines = newManagerWithSourceWait store pipelines (atomically retry)
+      withSourceGatesUsing makeManager writer $ \_ _ manager calls -> do
         (_, sub) <- startWritingSession manager
         submit sub (ClientMsg 2 (InsertWord "child"))
         _ <- events sub
         gate <- bounded (atomically (readTQueue calls))
         sourceEmit gate sourceDraft
+        admitted <- events sub
+        map (.event) admitted `shouldSatisfy` (\case [SourceFound _] -> True; _ -> False)
         putMVar (sourceRelease gate) ()
         input <- bounded (atomically (readTQueue snapshots))
         map (.title) input.sources `shouldBe` ["A source"]
@@ -545,24 +550,31 @@ spec = describe "Session actor" $ do
       started <- newTQueueIO
       active <- newTVarIO (0 :: Int)
       peak <- newTVarIO (0 :: Int)
-      let search _ _ = bracket
-            (atomically $ do
-              modifyTVar' active (+ 1)
-              count <- readTVar active
-              modifyTVar' peak (max count)
-              writeTQueue started ())
-            (\_ -> atomically (modifyTVar' active (subtract 1)))
-            (\_ -> atomically retry)
+      observedStarts <- newTVarIO []
+      let search request _ = do
+            release <- newEmptyMVar
+            bracket
+              (atomically $ do
+                modifyTVar' active (+ 1)
+                count <- readTVar active
+                modifyTVar' peak (max count)
+                modifyTVar' observedStarts (<> [request.toWord])
+                writeTQueue started (request.toWord, release))
+              (\_ -> atomically (modifyTVar' active (subtract 1)))
+              (\_ -> takeMVar release)
+          nextStarted = bounded (atomically (readTQueue started))
       withSources templateEntry search $ \_ store manager -> do
         (sid, sub) <- startWritingSession manager
         submit sub (ClientMsg 2 (InsertWord "edge-1"))
         _ <- events sub
-        bounded (atomically (readTQueue started))
+        (firstWord, releaseFirst) <- nextStarted
+        firstWord `shouldBe` "edge-1"
         -- The second live actor must share the same server-wide concurrency gate.
         (_, other) <- startWritingSession manager
         submit other (ClientMsg 2 (InsertWord "other-edge"))
         _ <- events other
-        bounded (atomically (readTQueue started))
+        (otherWord, _) <- nextStarted
+        otherWord `shouldBe` "other-edge"
         forM_ [2 .. 22 :: Int] $ \number ->
           submit sub (ClientMsg (number + 1) (InsertWord ("edge-" <> Text.pack (show number))))
         let collect count warnings
@@ -572,11 +584,26 @@ spec = describe "Session actor" $ do
                   Diagnostic LevelWarning message -> collect count (message : warnings)
                   otherMessage -> fail (show otherMessage)
         warnings <- bounded (collect 0 [])
-        warnings `shouldSatisfy` any (Text.isInfixOf "queue is full")
+        length (filter (Text.isInfixOf "queue is full") warnings) `shouldBe` 5
         readTVarIO active `shouldReturn` 2
         readTVarIO peak `shouldReturn` 2
         Just history <- loadEvents store sid
         Map.size (replay (Log (reverse history))).sessionEntries `shouldBe` 22
+        -- Keep the other actor's search blocked while one worker drains exactly
+        -- the sixteen oldest requests. Every start needs an explicit release.
+        let queuedWords = ["edge-" <> Text.pack (show number) | number <- [2 .. 17 :: Int]]
+        putMVar releaseFirst ()
+        forM_ queuedWords $ \expected -> do
+          (actual, release) <- nextStarted
+          actual `shouldBe` expected
+          putMVar release ()
+        -- A later accepted probe fences the queue: any retained overflow job
+        -- would start and block before it, making this exact identity fail.
+        submit sub (ClientMsg 30 (InsertWord "queue-probe"))
+        (probeWord, _) <- nextStarted
+        probeWord `shouldBe` "queue-probe"
+        readTVarIO observedStarts `shouldReturn` (["edge-1", "other-edge"] <> queuedWords <> ["queue-probe"])
+        readTVarIO peak `shouldReturn` 2
         bounded (stopManager manager)
         readTVarIO active `shouldReturn` 0
 
@@ -731,13 +758,19 @@ sourceDraft :: SourceDraft
 sourceDraft = SourceDraft Article "A source" Nothing "https://example.org/source" Nothing Nothing
 
 withSourceGates :: EntryWriter -> (FilePath -> Store -> Manager -> TQueue SourceGate -> IO ()) -> IO ()
-withSourceGates writer action = do
+withSourceGates = withSourceGatesUsing newManagerWith
+
+withSourceGatesUsing :: (Store -> Pipelines -> IO Manager) -> EntryWriter
+  -> (FilePath -> Store -> Manager -> TQueue SourceGate -> IO ()) -> IO ()
+withSourceGatesUsing makeManager writer action = do
   calls <- newTQueueIO
   let search _ emit = do
         release <- newEmptyMVar
         atomically (writeTQueue calls (SourceGate emit release))
         takeMVar release
-  withSources writer search (\path store manager -> action path store manager calls)
+  withDatabase $ \path -> bracket (openStore path) closeStore $ \store ->
+    bracket (makeManager store (Pipelines quiet (Just writer) (Just search))) stopManager
+      (\manager -> action path store manager calls)
 
 withSources :: EntryWriter -> SourceSearch -> (FilePath -> Store -> Manager -> IO ()) -> IO ()
 withSources writer search action = withDatabase $ \path -> bracket (openStore path) closeStore $ \store ->
