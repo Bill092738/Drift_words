@@ -21,13 +21,20 @@ import qualified ServerSpec
 import qualified SessionActorSpec
 import qualified SessionE2ESpec
 import qualified StoreSpec
+import SourceServerFixture (runSourceServer)
+import System.Environment (getArgs)
 import Test.Hspec (describe, hspec)
 import qualified TextSpec
 import qualified WikipediaSpec
 import qualified WritingSpec
 
 main :: IO ()
-main = hspec $ do
+main = getArgs >>= \case
+  ["--source-server-fixture"] -> runSourceServer
+  _ -> runSpecs
+
+runSpecs :: IO ()
+runSpecs = hspec $ do
   describe "Protocol" ProtocolSpec.spec
   describe "Domain replay" DomainReplaySpec.spec
   describe "Domain decide" DomainDecideSpec.spec

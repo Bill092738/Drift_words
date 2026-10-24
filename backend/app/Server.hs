@@ -27,7 +27,9 @@ import Drift.Model.SessionMock (BranchGenerator, mockBranches)
 import Drift.Pipeline.BranchService (closeBranchService, newBranchService)
 import Drift.Pipeline.SessionBranches (liveBranches)
 import Drift.Pipeline.Writing (templateEntry)
-import Drift.Server.SessionActor (Pipelines (..), newManagerWith, stopManager)
+import Drift.Pipeline.Sources (SourceEnv (..), defaultSourceEnv, findSources)
+import Drift.Search.Http (defaultHttpConfig, redactApiKeys, withFetch)
+import Drift.Server.SessionActor (Pipelines (..), SourceSearch, newManagerWith, stopManager)
 import Drift.Server.WebSocket (webSocketApp)
 import Drift.Store.SQLite (closeStore, openStore)
 import Network.HTTP.Types (status200, status404)
@@ -53,17 +55,31 @@ main = do
   prefetch <- (/= Just "0") <$> lookupEnv "DRIFT_PREFETCH"
   staticDir <- maybe "../frontend/dist" id <$> lookupEnv "DRIFT_STATIC_DIR"
   frontend <- frontendApp staticDir
-  withGenerator configPath prefetch $ \generator -> do
+  withGenerator configPath prefetch $ \generator -> withSources $ \sources -> do
     putStrLn (if writing then "writing: deterministic template" else "writing: disabled")
     putStrLn ("drift-server listening on http://localhost:" <> show port)
     putStrLn ("session database: " <> databasePath)
     bracket (openStore databasePath) closeStore $ \store ->
-      bracket (newManagerWith store (Pipelines generator (if writing then Just templateEntry else Nothing) Nothing)) stopManager $ \manager -> do
+      bracket (newManagerWith store (Pipelines generator (if writing then Just templateEntry else Nothing) sources)) stopManager $ \manager -> do
         let backend = serve api (server manager)
             app request respond = case pathInfo request of
               "api" : _ -> backend request respond
               _ -> frontend request respond
         run port (websocketsOr defaultConnectionOptions (webSocketApp manager) app)
+
+-- | Source HTTP state is shared across all sessions and exists only on opt-in.
+-- The manager and its workers close inside this scope, before the HTTP owner.
+withSources :: (Maybe SourceSearch -> IO a) -> IO a
+withSources action = lookupEnv "DRIFT_SOURCES" >>= \case
+  Just "1" -> do
+    key <- fmap T.pack <$> lookupEnv "OPENALEX_API_KEY"
+    putStrLn ("sources: Wikipedia/OpenAlex (OpenAlex key " <> maybe "absent" (const "present") key <> ")")
+    withFetch defaultHttpConfig $ \fetch -> do
+      let sourceEnv = (defaultSourceEnv fetch)
+            { envOpenAlexKey = key
+            , envLog = hPutStrLn stderr . T.unpack . redactApiKeys }
+      action (Just (findSources sourceEnv))
+  _ -> putStrLn "sources: disabled" >> action Nothing
 
 -- | The branch generator for the configured model, or the offline mock.
 -- Configuration errors stop the server at start, not at the first pick.

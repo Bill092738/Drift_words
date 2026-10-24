@@ -15,8 +15,10 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Database.SQLite.Simple as SQL
 import Drift.Domain.State (replay)
+import Drift.Domain.Entries (EntryState (..))
 import Drift.Domain.Types
 import Drift.Pipeline.Writing (WritingInput (..), templateEntry)
+import Drift.Search.Types (SourceDraft (..))
 import Drift.Model.SessionMock (mockBranches, mockCloud)
 import Drift.Protocol
 import Drift.Server.SessionActor
@@ -383,6 +385,201 @@ spec = describe "Session actor" $ do
         length visible `shouldBe` length (nub visible)
         Set.size state.sessionVisited `shouldBe` 15
 
+  describe "live sources" $ do
+    it "includes sources completed before the writer snapshot" $ do
+      snapshots <- newTQueueIO
+      let writer input = atomically (writeTQueue snapshots input) >> templateEntry input
+      withSourceGates writer $ \_ _ manager calls -> do
+        (_, sub) <- startWritingSession manager
+        submit sub (ClientMsg 2 (InsertWord "child"))
+        _ <- events sub
+        gate <- bounded (atomically (readTQueue calls))
+        sourceEmit gate sourceDraft
+        putMVar (sourceRelease gate) ()
+        input <- bounded (atomically (readTQueue snapshots))
+        map (.title) input.sources `shouldBe` ["A source"]
+        observed <- awaitActor sub (\case EntryWritten _ -> True; _ -> False)
+        [entry.cites | EntryWritten entry <- observed] `shouldBe` [[SourceId 1]]
+
+    it "reconciles sources between snapshot and entry commit" $ do
+      snapshot <- newEmptyMVar
+      releaseWriter <- newEmptyMVar
+      let writer input = putMVar snapshot input >> takeMVar releaseWriter >> templateEntry input
+      withSourceGates writer $ \_ _ manager calls -> do
+        (_, sub) <- startWritingSession manager
+        submit sub (ClientMsg 2 (InsertWord "child"))
+        _ <- events sub
+        gate <- bounded (atomically (readTQueue calls))
+        input <- withinSourceWait (takeMVar snapshot)
+        input.sources `shouldBe` []
+        sourceEmit gate sourceDraft
+        _ <- awaitActor sub (\case SourceFound _ -> True; _ -> False)
+        putMVar releaseWriter ()
+        observed <- awaitActor sub (\case EntryWritten _ -> True; _ -> False)
+        [entry.cites | EntryWritten entry <- observed] `shouldBe` [[SourceId 1]]
+
+    it "revises an entry when its source arrives after writing" $
+      withSourceGates templateEntry $ \_ store manager calls -> do
+        (sid, sub) <- startWritingSession manager
+        submit sub (ClientMsg 2 (InsertWord "child"))
+        _ <- events sub
+        gate <- bounded (atomically (readTQueue calls))
+        written <- withinSourceWait (awaitActor sub (\case EntryWritten _ -> True; _ -> False))
+        [entry.cites | EntryWritten entry <- written] `shouldBe` [[]]
+        sourceEmit gate sourceDraft
+        batch <- events sub
+        map (.event) batch `shouldSatisfy` (\case [SourceFound _, EntryRevised _] -> True; _ -> False)
+        Just history <- loadEvents store sid
+        let state = replay (Log (reverse history))
+        map (\entry -> entry.entry.cites) (Map.elems state.sessionEntries) `shouldBe` [[SourceId 1]]
+
+    it "isolates a search exception, redacts its details, and still writes" $
+      withSources templateEntry (\_ _ -> throwIO (userError "api_key=sentinel-private-key")) $ \_ _ manager -> do
+        (_, sub) <- startWritingSession manager
+        submit sub (ClientMsg 2 (InsertWord "child"))
+        _ <- events sub
+        bounded (receive sub) >>= \case
+          Diagnostic LevelWarning message -> message `shouldSatisfy` (not . Text.isInfixOf "sentinel-private-key")
+          other -> expectationFailure (show other)
+        entryBatch sub `shouldReturn` [Entry (EntryId 1) (NodeId 2) "root → child" "" []]
+        submit sub (ClientMsg 3 (SetDivergence 0.3))
+        map (.event) <$> events sub `shouldReturn` [DivergenceSet 0.3]
+
+    it "rolls back source and entry revision together on append failure, then accepts a retry" $
+      withSourceGates templateEntry $ \path store manager calls -> do
+        (sid, sub) <- startWritingSession manager
+        submit sub (ClientMsg 2 (InsertWord "child"))
+        _ <- events sub
+        gate <- bounded (atomically (readTQueue calls))
+        _ <- awaitActor sub (\case EntryWritten _ -> True; _ -> False)
+        beforeSource <- loadEvents store sid
+        withRaw path $ \connection -> SQL.execute_ connection
+          "CREATE TRIGGER reject_source_revision BEFORE INSERT ON events WHEN NEW.seq = 6 BEGIN SELECT RAISE(ABORT, 'private-source-failure'); END"
+        sourceEmit gate sourceDraft
+        bounded (receive sub) `shouldReturn` Diagnostic LevelError "Saving the source failed."
+        loadEvents store sid `shouldReturn` beforeSource
+        fence <- connected manager sid
+        snapshot <- events fence
+        Map.null (replay (Log (reverse snapshot))).sessionSources `shouldBe` True
+        withRaw path $ \connection -> SQL.execute_ connection "DROP TRIGGER reject_source_revision"
+        sourceEmit gate sourceDraft
+        batch <- events sub
+        map (.event) batch `shouldSatisfy` (\case [SourceFound _, EntryRevised _] -> True; _ -> False)
+
+    it "isolates a lazy search completion failure without losing its pool worker" $ do
+      attempts <- newIORef (0 :: Int)
+      let search _ emit = do
+            attempt <- atomicModifyIORef' attempts (\n -> (n + 1, n))
+            if attempt == 0 then pure (error "api_key=lazy-private-search") else emit sourceDraft
+      withSources templateEntry search $ \_ _ manager -> do
+        (_, sub) <- startWritingSession manager
+        submit sub (ClientMsg 2 (InsertWord "child"))
+        _ <- events sub
+        bounded (receive sub) >>= \case
+          Diagnostic LevelWarning message -> message `shouldSatisfy` (not . Text.isInfixOf "lazy-private-search")
+          other -> expectationFailure (show other)
+        _ <- entryBatch sub
+        submit sub (ClientMsg 3 (InsertWord "next"))
+        _ <- events sub
+        observed <- awaitActor sub (\case EntryWritten _ -> True; _ -> False)
+        [entry.cites | EntryWritten entry <- observed] `shouldBe` [[SourceId 1]]
+
+    it "keeps picks, backtracking and rings moving while a search never ends" $ do
+      entered <- newEmptyMVar
+      let search _ _ = putMVar entered () >> atomically retry
+      withDatabase $ \path -> bracket (openStore path) closeStore $ \store ->
+        bracket (newManagerWith store (Pipelines mockBranches (Just templateEntry) (Just search))) stopManager $ \manager -> do
+          (_, sub) <- startWritingSession manager
+          _ <- awaitActor sub (\case BranchesOffered _ _ -> True; _ -> False)
+          submit sub (ClientMsg 2 (InsertWord "child"))
+          bounded (takeMVar entered)
+          childEvents <- awaitActor sub (\case BranchesOffered (NodeId 2) _ -> True; _ -> False)
+          submit sub (ClientMsg 3 (Backtrack (NodeId 1)))
+          revisitedEvents <- awaitActor sub (\case BranchesOffered (NodeId 1) _ -> True; _ -> False)
+          let isWritten (EntryWritten _) = True
+              isWritten _ = False
+          if any isWritten (childEvents <> revisitedEvents) then pure ()
+            else void (withinSourceWait (awaitActor sub isWritten))
+          pure ()
+
+    it "accepts old-edge sources after focus moves and deduplicates repeated callbacks" $
+      withSourceGates templateEntry $ \_ store manager calls -> do
+        (sid, sub) <- startWritingSession manager
+        submit sub (ClientMsg 2 (InsertWord "child"))
+        _ <- events sub
+        gate <- bounded (atomically (readTQueue calls))
+        submit sub (ClientMsg 3 (Backtrack (NodeId 1)))
+        _ <- events sub
+        sourceEmit gate sourceDraft
+        sourceEmit gate sourceDraft
+        _ <- awaitActor sub (\case SourceFound _ -> True; _ -> False)
+        fence <- connected manager sid
+        snapshot <- events fence
+        let state = replay (Log (reverse snapshot))
+        Map.size state.sessionSources `shouldBe` 1
+        map (.node) (Map.elems state.sessionSources) `shouldBe` [NodeId 2]
+        Just history <- loadEvents store sid
+        length [() | Stamped _ _ (SourceFound _) <- history] `shouldBe` 1
+
+    it "drops sources after wrap-up and cancels and joins source work on halt" $ do
+      cancelled <- newEmptyMVar
+      callbacks <- newEmptyMVar
+      let search _ emit = (putMVar callbacks emit >> atomically retry) `finally` putMVar cancelled ()
+      withSources templateEntry search $ \_ store manager -> do
+        (sid, sub) <- startWritingSession manager
+        submit sub (ClientMsg 2 (InsertWord "child"))
+        _ <- events sub
+        emit <- bounded (takeMVar callbacks)
+        submit sub (ClientMsg 3 WrapUp)
+        _ <- events sub
+        emit sourceDraft
+        fence <- connected manager sid
+        snapshot <- events fence
+        Map.null (replay (Log (reverse snapshot))).sessionSources `shouldBe` True
+        bounded (stopManager manager)
+        bounded (takeMVar cancelled)
+        Just history <- loadEvents store sid
+        Map.null (replay (Log (reverse history))).sessionSources `shouldBe` True
+
+    it "bounds active searches globally, skips newest on queue overflow, and writes every edge" $ do
+      started <- newTQueueIO
+      active <- newTVarIO (0 :: Int)
+      peak <- newTVarIO (0 :: Int)
+      let search _ _ = bracket
+            (atomically $ do
+              modifyTVar' active (+ 1)
+              count <- readTVar active
+              modifyTVar' peak (max count)
+              writeTQueue started ())
+            (\_ -> atomically (modifyTVar' active (subtract 1)))
+            (\_ -> atomically retry)
+      withSources templateEntry search $ \_ store manager -> do
+        (sid, sub) <- startWritingSession manager
+        submit sub (ClientMsg 2 (InsertWord "edge-1"))
+        _ <- events sub
+        bounded (atomically (readTQueue started))
+        -- The second live actor must share the same server-wide concurrency gate.
+        (_, other) <- startWritingSession manager
+        submit other (ClientMsg 2 (InsertWord "other-edge"))
+        _ <- events other
+        bounded (atomically (readTQueue started))
+        forM_ [2 .. 22 :: Int] $ \number ->
+          submit sub (ClientMsg (number + 1) (InsertWord ("edge-" <> Text.pack (show number))))
+        let collect count warnings
+              | count == 22 = pure warnings
+              | otherwise = receive sub >>= \case
+                  Events batch -> collect (count + length [() | Stamped _ _ (EntryWritten _) <- batch]) warnings
+                  Diagnostic LevelWarning message -> collect count (message : warnings)
+                  otherMessage -> fail (show otherMessage)
+        warnings <- bounded (collect 0 [])
+        warnings `shouldSatisfy` any (Text.isInfixOf "queue is full")
+        readTVarIO active `shouldReturn` 2
+        readTVarIO peak `shouldReturn` 2
+        Just history <- loadEvents store sid
+        Map.size (replay (Log (reverse history))).sessionEntries `shouldBe` 22
+        bounded (stopManager manager)
+        readTVarIO active `shouldReturn` 0
+
   describe "live writing" $ do
     it "writes one template entry for a child and none for the root" $
       withWriting templateEntry $ \_ store manager -> do
@@ -524,6 +721,42 @@ spec = describe "Session actor" $ do
           snapshot <- events sub
           length [() | Stamped _ _ (EntryWritten _) <- snapshot] `shouldBe` 1
           noMessage sub
+
+data SourceGate = SourceGate
+  { sourceEmit :: SourceDraft -> IO ()
+  , sourceRelease :: MVar ()
+  }
+
+sourceDraft :: SourceDraft
+sourceDraft = SourceDraft Article "A source" Nothing "https://example.org/source" Nothing Nothing
+
+withSourceGates :: EntryWriter -> (FilePath -> Store -> Manager -> TQueue SourceGate -> IO ()) -> IO ()
+withSourceGates writer action = do
+  calls <- newTQueueIO
+  let search _ emit = do
+        release <- newEmptyMVar
+        atomically (writeTQueue calls (SourceGate emit release))
+        takeMVar release
+  withSources writer search (\path store manager -> action path store manager calls)
+
+withSources :: EntryWriter -> SourceSearch -> (FilePath -> Store -> Manager -> IO ()) -> IO ()
+withSources writer search action = withDatabase $ \path -> bracket (openStore path) closeStore $ \store ->
+  bracket (newManagerWith store (Pipelines quiet (Just writer) (Just search))) stopManager (action path store)
+
+-- The production deadline controls the test bound; no test sleeps to arrange
+-- source/writer order. Barriers establish each ordering explicitly.
+withinSourceWait :: IO a -> IO a
+withinSourceWait action = timeout (sourceWaitMicros * 4) action >>= maybe
+  (fail "Writer did not start within the bounded source wait") pure
+
+awaitActor :: Subscription -> (Event -> Bool) -> IO [Event]
+awaitActor sub predicate = bounded (go [])
+  where
+    go accumulated = receive sub >>= \case
+      Events batch -> let combined = accumulated <> map (.event) batch
+        in if any predicate combined then pure combined else go combined
+      Diagnostic _ _ -> go accumulated
+      other -> fail (show other)
 
 withWriting :: EntryWriter -> (FilePath -> Store -> Manager -> IO ()) -> IO ()
 withWriting writer action = withDatabase $ \path -> bracket (openStore path) closeStore $ \store ->

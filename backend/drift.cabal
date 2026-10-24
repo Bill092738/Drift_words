@@ -156,6 +156,7 @@ test-suite drift-test
     ServerSpec
     SessionActorSpec
     SessionE2ESpec
+    SourceServerFixture
     StoreSpec
     TextSpec
     WikipediaSpec

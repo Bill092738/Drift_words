@@ -11,12 +11,13 @@ import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Char (toUpper)
 import Data.List (nub)
+import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
 import Drift.Api (CreateSessionResponse (..))
 import Drift.Domain.State (replay)
-import Drift.Domain.Types (Log (..), Session (..))
+import Drift.Domain.Types (Log (..), Placement (..), Session (..))
 import Drift.Protocol
 import Network.HTTP.Client
   ( Manager, Request (..), RequestBody (..), Response, defaultManagerSettings
@@ -31,9 +32,9 @@ import Network.WebSockets
 import System.Directory
   ( createDirectory, doesFileExist, getCurrentDirectory, getTemporaryDirectory
   , removeFile, removePathForcibly )
-import System.Environment (getEnvironment, lookupEnv)
+import System.Environment (getEnvironment, getExecutablePath, lookupEnv)
 import System.FilePath ((</>), isAbsolute, takeDirectory)
-import System.IO (IOMode (ReadWriteMode), hClose, openFile, openTempFile)
+import System.IO (IOMode (ReadWriteMode, WriteMode), hClose, openFile, openTempFile, withFile)
 import System.Info (os)
 import System.Process
   ( CreateProcess (..), ProcessHandle, StdStream (Inherit, NoStream, UseHandle), createProcess
@@ -45,8 +46,74 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  sourceSpec
   writingSpec
   restartSpec
+
+sourceSpec :: Spec
+sourceSpec = describe "M6 server sources" $ do
+  it "starts enabled source assembly without DRIFT_CONFIG and never prints its optional key" $ do
+    executable <- resolveServerExecutable
+    port <- reservePort
+    withTemporaryDatabase $ \databasePath -> do
+      inherited <- getEnvironment
+      let logPath = databasePath <> ".log"
+          environment = [("DRIFT_SOURCES", "1"), ("OPENALEX_API_KEY", "sentinel-openalex-secret")]
+            <> serverEnvironment Nothing port databasePath inherited
+      withFile logPath WriteMode $ \output -> bracket
+        (createProcess (proc executable []) {env = Just environment,
+          std_in = NoStream, std_out = UseHandle output, std_err = UseHandle output})
+        (\(_, _, _, process) -> stopServer process)
+        (\_ -> waitForHealth port)
+      output <- readFile logPath
+      output `shouldSatisfy` Text.isInfixOf "sources: Wikipedia/OpenAlex (OpenAlex key present)" . Text.pack
+      output `shouldSatisfy` (not . Text.isInfixOf "sentinel-openalex-secret" . Text.pack)
+
+  it "persists fake live sources, citations and placements through real server process restart" $ do
+    executable <- getExecutablePath
+    port <- reservePort
+    withTemporaryDatabase $ \databasePath -> do
+      let runFixture action = do
+            inherited <- getEnvironment
+            bracket
+              (createProcess (proc executable ["--source-server-fixture"])
+                {env = Just (serverEnvironment Nothing port databasePath inherited),
+                 std_in = NoStream, std_out = Inherit, std_err = Inherit})
+              (\(_, _, _, process) -> stopServer process) (const action)
+      (identifier, history) <- runFixture $ do
+        waitForHealth port
+        created <- createSession port "en"
+        history <- withSession port (sessionId created) $ \connection -> do
+          initial <- receiveEvents connection
+          submitCommand connection 1 (StartWithWord "root")
+          root <- collectUntil connection (\case NodeChosen _ _ _ _ _ -> True; _ -> False)
+          submitCommand connection 2 (InsertWord "child")
+          child <- collectUntil connection isEntry
+          [source | Stamped _ _ (SourceFound source) <- child] `shouldSatisfy` (not . null)
+          [entry | Stamped _ _ (EntryWritten entry) <- child]
+            `shouldBe` [Entry (EntryId 1) (NodeId 2) "root \8594 child" "" [SourceId 1]]
+          submitCommand connection 3 (PlaceSource (SourceId 1) (Vec2 3.5 (-4.25)) 0.6)
+          placed <- collectUntil connection (\case SourcePlaced _ _ _ -> True; _ -> False)
+          submitCommand connection 4 (SetDivergence 0.33)
+          fenced <- collectUntil connection (== DivergenceSet 0.33)
+          pure (initial <> root <> child <> placed <> fenced)
+        pure (sessionId created, history)
+      runFixture $ do
+        waitForHealth port
+        withSession port identifier $ \connection -> do
+          restored <- receiveEvents connection
+          restored `shouldBe` history
+          let state = replay (Log (reverse restored))
+          Map.size (sessionSources state) `shouldBe` 1
+          Map.size (sessionEntries state) `shouldBe` 1
+          sessionSourcePlacements state `shouldBe`
+            Map.singleton (SourceId 1) (Placement (Vec2 3.5 (-4.25)) 0.6)
+          submitCommand connection 5 (InsertWord "grandchild")
+          continued <- collectUntil connection isEntry
+          [entry | Stamped _ _ (EntryWritten entry) <- continued]
+            `shouldBe` [Entry (EntryId 2) (NodeId 3) "child \8594 grandchild" "" [SourceId 2]]
+          [identifier' | Stamped _ _ (SourceFound (Source identifier' _ _ _ _ _ _ _)) <- continued]
+            `shouldBe` [SourceId 2]
 
 writingSpec :: Spec
 writingSpec = describe "M7 server writing" $ do

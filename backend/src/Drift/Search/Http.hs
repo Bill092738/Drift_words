@@ -1,5 +1,8 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+-- http-client deprecates explicit close in favour of GC; the server still
+-- deliberately releases its shared manager after all source workers join.
+{-# OPTIONS_GHC -Wno-deprecations #-}
 
 -- | The only place that touches the network. Everything else takes a 'Fetch',
 -- so providers are tested against saved responses and a fake 'Fetch'.
@@ -15,13 +18,15 @@ module Drift.Search.Http
   , HttpConfig (..)
   , defaultHttpConfig
   , newFetch
+  , withFetch
+  , redactApiKeys
   , rateLimitWait
   , storeInCache
   ) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (MVar, modifyMVar, newMVar)
-import Control.Exception (try)
+import Control.Exception (bracket, try)
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.CaseInsensitive as CI
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
@@ -98,12 +103,18 @@ data Shared = Shared
   }
 
 newFetch :: HttpConfig -> IO Fetch
-newFetch cfg = do
+newFetch cfg = fst <$> newFetchResources cfg
+
+withFetch :: HttpConfig -> (Fetch -> IO a) -> IO a
+withFetch cfg action = bracket (newFetchResources cfg) snd (action . fst)
+
+newFetchResources :: HttpConfig -> IO (Fetch, IO ())
+newFetchResources cfg = do
   manager <-
     HC.newManager
       tlsManagerSettings {HC.managerResponseTimeout = HC.responseTimeoutMicro (cfg.timeoutSeconds * 1000000)}
   shared <- Shared <$> newMVar Map.empty <*> newIORef Map.empty <*> newIORef Map.empty
-  pure (Fetch (perform cfg manager shared))
+  pure (Fetch (perform cfg manager shared), HC.closeManager manager)
 
 perform :: HttpConfig -> HC.Manager -> Shared -> HttpRequest -> IO (Either FetchError HttpResponse)
 perform cfg manager shared rq = do

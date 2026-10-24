@@ -7,6 +7,7 @@ module Drift.Server.SessionActor
   ( BranchGenerator, EntryWriter, SourceSearch, Pipelines (..), Manager, Subscription
   , newManager, newManagerWith, createManagedSession, subscribeSession
   , newManagerWithAppendObserver, subscribeSessionWithJoinObserver
+  , sourceConcurrency, sourceQueueCapacity, sourceWaitMicros
   , submit, receive, unsubscribe, stopManager
   ) where
 
@@ -15,20 +16,21 @@ import Control.Concurrent.MVar (MVar, modifyMVarMasked, newMVar)
 import Control.Concurrent.STM
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeAsyncException, SomeException, catch, displayException, evaluate, finally, fromException, mask, onException, throwIO, try)
-import Control.Monad (filterM, foldM, forM_, void, when)
+import Control.Monad (filterM, foldM, forM_, forever, replicateM, void, when)
 import Data.Int (Int64)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Data.Unique (hashUnique, newUnique)
-import Drift.Domain.Decide (admitEntry, decide, offerBranches)
+import Drift.Domain.Decide (admitEntry, admitSource, decide, offerBranches)
 import Drift.Domain.Entries (entriesForNode)
 import Drift.Domain.State (applyStamped, replay)
 import Drift.Domain.Types
 import Drift.Model.SessionMock (BranchGenerator, mockCloud)
 import Drift.Pipeline.Writing (WritingInput (..), fallbackEntry)
-import Drift.Search.Types (SourceRequest, SourceDraft)
+import Drift.Search.Types (SourceRequest (..), SourceDraft)
 import Drift.Protocol
 import Drift.Store.SQLite
 
@@ -42,15 +44,35 @@ data Pipelines = Pipelines
   }
 
 newManagerWith :: Store -> Pipelines -> IO Manager
-newManagerWith store pipelines = do
+newManagerWith store pipelines = createManager store pipelines (\_ _ _ -> pure ())
+
+createManager :: Store -> Pipelines -> (SessionId -> [Event] -> Either StoreException () -> IO ()) -> IO Manager
+createManager store pipelines observer = mask $ \_ -> do
   registry <- newMVar (Running Map.empty)
-  pure (Manager store pipelines registry (\_ _ _ -> pure ()))
+  runtime <- case pipelines.pipeSources of
+    Nothing -> pure Nothing
+    Just _ -> do
+      queue <- newTBQueueIO (fromIntegral sourceQueueCapacity)
+      workers <- replicateM sourceConcurrency $ asyncWithUnmask $ \unmask ->
+        unmask (forever (atomically (readTBQueue queue) >>= id))
+      pure (Just (SourceRuntime queue workers))
+  pure (Manager store pipelines registry observer runtime)
+
+-- | One shared queue/pool per server, including work from different sessions.
+-- The queue contains closures, never durable jobs; a full queue drops newest.
+data SourceRuntime = SourceRuntime (TBQueue (IO ())) [Async ()]
+
+sourceConcurrency, sourceQueueCapacity, sourceWaitMicros :: Int
+sourceConcurrency = 2
+sourceQueueCapacity = 16
+sourceWaitMicros = 250000
 
 data Manager = Manager
   { managerStore :: Store
   , managerPipelines :: Pipelines
   , managerRegistry :: MVar Registry
   , managerAppendObserver :: SessionId -> [Event] -> Either StoreException () -> IO ()
+  , managerSourceRuntime :: Maybe SourceRuntime
   }
 
 data Registry = Running (Map.Map SessionId Actor) | Stopped (Async ())
@@ -79,6 +101,9 @@ data Message
     -- ^ a 'Diagnostic' from a generation, delivered only if it is still current
   | Written WritingInput (Either Text Entry)
     -- ^ edge work remains valid when focus/generation changes
+  | SourceArrived NodeId SourceDraft
+  | SourceFailed
+  | BeginWriting NodeId
   | Halt
 
 data ActorState = ActorState
@@ -90,6 +115,7 @@ data ActorState = ActorState
   , stateNextCandidate :: CandidateId
   , stateCurrentWorker :: Maybe (Async ())
   , stateWorkers :: [Async ()]
+  , stateWritingStarted :: Set.Set NodeId
   }
 
 newManager :: Store -> BranchGenerator -> IO Manager
@@ -100,9 +126,8 @@ newManager store generator = newManagerWithAppendObserver store generator (\_ _ 
 newManagerWithAppendObserver
   :: Store -> BranchGenerator
   -> (SessionId -> [Event] -> Either StoreException () -> IO ()) -> IO Manager
-newManagerWithAppendObserver store generator observer = do
-  registry <- newMVar (Running Map.empty)
-  pure (Manager store (Pipelines generator Nothing Nothing) registry observer)
+newManagerWithAppendObserver store generator observer =
+  createManager store (Pipelines generator Nothing Nothing) observer
 
 -- | A collision is retried against the durable uniqueness constraint. No
 -- process-local counter or clock value is trusted to prove global uniqueness.
@@ -204,6 +229,9 @@ stopManager manager = do
         atomically $ forM_ (Map.elems actors) $ \actor -> do
           writeTVar actor.actorAlive False
           writeTQueue actor.actorInbox Halt
+        -- Cancel and join provider work before the caller can close its Fetch.
+        forM_ manager.managerSourceRuntime $ \(SourceRuntime _ workers) ->
+          mapConcurrently_ cancel workers
         mapM_ (void . waitCatch . actorThread) (Map.elems actors)
       pure (Stopped job, job)
   wait job
@@ -215,7 +243,7 @@ startActor manager sid history = do
   let logValue = Log (reverse history)
       session = replay logValue
       initial = ActorState session logValue (length history) Map.empty 0
-        session.sessionNextCandidateId Nothing []
+        session.sessionNextCandidateId Nothing [] Set.empty
   -- Registry mutation stays masked; the actor itself runs unmasked.
   thread <- asyncWithUnmask $ \unmask ->
     unmask ((recoverWriting inbox initial >>= loop inbox) `finally` atomically (writeTVar alive False))
@@ -249,7 +277,7 @@ startActor manager sid history = do
               case persisted of
                 Nothing -> reject subscription message.req unavailableReason >> pure current
                 Just committed -> do
-                  writing <- foldM (startWriting inbox) committed
+                  writing <- foldM (startEdge inbox) committed
                     [target | NodeChosen target (Just _) _ _ _ <- events]
                   if any changesGeneration events
                     then regenerate inbox writing else pure writing
@@ -257,6 +285,24 @@ startActor manager sid history = do
         Diagnose token diagnostic -> do
           when (token == current.stateGeneration) (broadcast current diagnostic)
           loop inbox current
+        SourceFailed -> do
+          when (not current.stateSession.sessionWrapped) $
+            broadcast current (Diagnostic LevelWarning "Source search failed; continuing without new sources.")
+          loop inbox current
+        SourceArrived target draft -> do
+          next <- case admitSource current.stateSession target draft of
+            Left _ -> pure current
+            Right batch -> commit current batch >>= \case
+              Nothing -> do
+                broadcast current (Diagnostic LevelError "Saving the source failed.")
+                pure current
+              Just committed -> pure committed
+          loop inbox next
+        BeginWriting target -> do
+          next <- if current.stateSession.sessionWrapped || target `Set.member` current.stateWritingStarted
+            then pure current else startWriting inbox
+              current {stateWritingStarted = Set.insert target current.stateWritingStarted} target
+          loop inbox next
         Written input outcome -> do
           next <- if current.stateSession.sessionWrapped then pure current else do
             entry <- case outcome of
@@ -325,12 +371,46 @@ startActor manager sid history = do
 
     recoverWriting inbox state
       | state.stateSession.sessionWrapped = pure state
-      | otherwise = foldM (startWriting inbox) state
+      | otherwise = foldM (startEdge inbox) state
           [ node.nodeId
           | node <- Map.elems state.stateSession.sessionNodes
           , Just _ <- [node.nodeParent]
           , null (entriesForNode node.nodeId state.stateSession.sessionEntries)
           ]
+
+    startEdge inbox state target = case writingInput state.stateSession target of
+      Nothing -> pure state
+      Just input -> case (manager.managerSourceRuntime, manager.managerPipelines.pipeSources) of
+        (Just (SourceRuntime queue _), Just search) -> do
+          let request = SourceRequest (Just input.fromWord) input.toWord input.path input.lang
+              deliver draft = do
+                -- Provider values may contain lazy failures; evaluate outside
+                -- the actor, before putting any proposal in its inbox.
+                _ <- evaluate (length (show draft))
+                atomically (writeTQueue inbox (SourceArrived target draft))
+              job = do
+                outcome <- try (search request deliver >>= evaluate)
+                case outcome of
+                  Left (failure :: SomeException)
+                    | Just _ <- fromException @SomeAsyncException failure -> throwIO failure
+                    | otherwise -> atomically (writeTQueue inbox SourceFailed)
+                  Right () -> pure ()
+                atomically (writeTQueue inbox (BeginWriting target))
+          accepted <- atomically $ do
+            full <- isFullTBQueue queue
+            if full then pure False else writeTBQueue queue job >> pure True
+          if accepted then do
+            timer <- async $ do
+              threadDelay sourceWaitMicros
+              atomically (writeTQueue inbox (BeginWriting target))
+            pure state {stateWorkers = timer : state.stateWorkers}
+          else do
+            broadcast state (Diagnostic LevelWarning "Source queue is full; skipping the newest search.")
+            atomically (writeTQueue inbox (BeginWriting target))
+            pure state
+        _ -> do
+          atomically (writeTQueue inbox (BeginWriting target))
+          pure state
 
     startWriting inbox state target = case manager.managerPipelines.pipeWriter of
       Nothing -> pure state
