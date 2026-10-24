@@ -31,8 +31,10 @@ library
     Drift.Model.Provider
     Drift.Model.Scheduler
     Drift.Model.SessionMock
+    Drift.Output.Assemble
     Drift.Output.Cite
     Drift.Output.Draft
+    Drift.Output.Export
     Drift.Output.Final
     Drift.Output.Tree
     Drift.Pipeline.BranchService
@@ -72,6 +74,7 @@ library
     , warp              >=3.4  && <3.5
     , websockets
     , yaml              >=0.11 && <0.12
+    , zip-archive       >=0.4  && <0.5
 
 executable drift-server
   import:           shared
@@ -128,8 +131,10 @@ test-suite drift-test
     DomainReplaySpec
     DraftSpec
     EntriesSpec
+    ExportSpec
     FinalSpec
     ModelProviderSpec
+    OutputsWiringSpec
     PrefetchSpec
     ProtocolSpec
     SchedulerSpec
@@ -147,6 +152,7 @@ test-suite drift-test
     , bytestring
     , citeproc
     , containers
+    , data-default
     , directory
     , drift
     , filepath
@@ -163,3 +169,5 @@ test-suite drift-test
     , wai-websockets
     , warp           >=3.4 && <3.5
     , websockets
+    , xml-conduit
+    , zip-archive

@@ -9,8 +9,10 @@ import qualified DomainPropertySpec
 import qualified DomainReplaySpec
 import qualified DraftSpec
 import qualified EntriesSpec
+import qualified ExportSpec
 import qualified FinalSpec
 import qualified ModelProviderSpec
+import qualified OutputsWiringSpec
 import qualified PrefetchSpec
 import qualified ProtocolSpec
 import qualified SchedulerSpec
@@ -44,3 +46,5 @@ main = hspec $ do
   describe "Citations in outputs" CiteSpec.spec
   describe "Draft" DraftSpec.spec
   describe "Final document" FinalSpec.spec
+  describe "Export" ExportSpec.spec
+  describe "Wrap-up outputs" OutputsWiringSpec.spec
