@@ -30,6 +30,7 @@ module Drift.Protocol
     -- * Server to client
   , Event (..)
   , Stamped (..)
+  , DiagnosticLevel (..)
   , ServerMsg (..)
   ) where
 
@@ -38,7 +39,7 @@ import Data.Aeson.TH (deriveJSON)
 import Data.Aeson.TypeScript.TH (deriveTypeScript)
 import Data.Int (Int64)
 import Data.Text (Text)
-import Drift.Protocol.Options (enumOptions, wireOptions)
+import Drift.Protocol.Options (enumOptions, prefixedEnumOptions, wireOptions)
 
 ------------------------------------------------------------------------------
 -- Identifiers. Allocated by the server, unique within a session.
@@ -165,10 +166,17 @@ data Stamped = Stamped
   }
   deriving (Eq, Show)
 
+-- | Severity of a 'Diagnostic'. Encoded as @"info"@, @"warning"@, @"error"@.
+data DiagnosticLevel = LevelInfo | LevelWarning | LevelError
+  deriving (Eq, Show)
+
 data ServerMsg
   = Events {events :: [Stamped]}
     -- ^ new events; on connect, the whole log so far
   | Rejected {req :: Int, reason :: Text}
+  | Diagnostic {level :: DiagnosticLevel, message :: Text}
+    -- ^ a developer-facing warning or error (for example, model generation
+    -- failed); not part of the session log and not replayed
   deriving (Eq, Show)
 
 ------------------------------------------------------------------------------
@@ -179,6 +187,9 @@ $(concat <$> traverse (\n -> (<>) <$> deriveJSON wireOptions n <*> deriveTypeScr
 
 $(concat <$> traverse (\n -> (<>) <$> deriveJSON enumOptions n <*> deriveTypeScript enumOptions n)
     [''Lang, ''Origin, ''SourceKind])
+
+$(concat <$> traverse (\n -> (<>) <$> deriveJSON (prefixedEnumOptions "Level") n <*> deriveTypeScript (prefixedEnumOptions "Level") n)
+    [''DiagnosticLevel])
 
 $(concat <$> traverse (\n -> (<>) <$> deriveJSON wireOptions n <*> deriveTypeScript wireOptions n)
     [ ''Vec2, ''Candidate, ''Source, ''Entry, ''Outputs

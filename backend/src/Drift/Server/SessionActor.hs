@@ -12,7 +12,8 @@ module Drift.Server.SessionActor
 import Control.Concurrent.Async (Async, async, asyncWithUnmask, cancel, mapConcurrently_, poll, wait, waitCatch)
 import Control.Concurrent.MVar (MVar, modifyMVarMasked, newMVar)
 import Control.Concurrent.STM
-import Control.Exception (SomeException, catch, evaluate, finally, mask, onException, throwIO, try)
+import Control.Concurrent (threadDelay)
+import Control.Exception (SomeAsyncException, SomeException, catch, displayException, evaluate, finally, fromException, mask, onException, throwIO, try)
 import Control.Monad (filterM, forM_, void, when)
 import Data.Int (Int64)
 import Data.List (foldl')
@@ -55,7 +56,10 @@ data Message
   = Join Subscription (TMVar ())
   | Leave Int
   | Request Subscription ClientMsg
-  | Generated Integer NodeId (Maybe [Text])
+  | Generated Integer NodeId (Either Text [Text])
+    -- ^ a generation's final outcome: words, or why every attempt failed
+  | Diagnose Integer ServerMsg
+    -- ^ a 'Diagnostic' from a generation, delivered only if it is still current
   | Halt
 
 data ActorState = ActorState
@@ -228,22 +232,36 @@ startActor manager sid history = do
                 Just committed -> if any changesGeneration events
                   then regenerate inbox committed else pure committed
           loop inbox next
+        Diagnose token diagnostic -> do
+          when (token == current.stateGeneration) (broadcast current diagnostic)
+          loop inbox current
         Generated token target result -> do
           next <- if token /= current.stateGeneration || current.stateSession.sessionFocus /= Just target
               || current.stateSession.sessionWrapped
             then pure current
             else case result of
-              Nothing -> pure current {stateCurrentWorker = Nothing}
-              Just words -> do
+              Left failure -> do
+                broadcast current (Diagnostic LevelError failure)
+                pure current {stateCurrentWorker = Nothing}
+              Right generated -> do
                 let CandidateId first = max current.stateNextCandidate current.stateSession.sessionNextCandidateId
-                    candidates = zipWith Candidate (map CandidateId [first ..]) words
+                    candidates = zipWith Candidate (map CandidateId [first ..]) generated
                 case offerBranches current.stateSession target candidates of
-                  Left _ -> pure current {stateCurrentWorker = Nothing}
+                  Left (Rejection why) -> do
+                    broadcast current (Diagnostic LevelError ("Generated branches were not offered: " <> why))
+                    pure current {stateCurrentWorker = Nothing}
                   Right events -> commit current events >>= \case
-                    Nothing -> pure current {stateCurrentWorker = Nothing}
-                    Just committed -> pure committed
-                      { stateNextCandidate = CandidateId (first + length words)
-                      , stateCurrentWorker = Nothing }
+                    Nothing -> do
+                      broadcast current (Diagnostic LevelError
+                        "Saving the generated branches failed; revisit this word to generate them again.")
+                      pure current {stateCurrentWorker = Nothing}
+                    Just committed -> do
+                      when (not (null [() | BranchesOffered _ [] <- events])) $
+                        broadcast committed (Diagnostic LevelWarning
+                          "Every generated word was filtered out (already chosen or repeated too often); the ring is empty.")
+                      pure committed
+                        { stateNextCandidate = CandidateId (first + length generated)
+                        , stateCurrentWorker = Nothing }
           loop inbox next
 
     commit state events = do
@@ -279,19 +297,53 @@ startActor manager sid history = do
       case state.stateSession.sessionFocus of
         Just target | not state.stateSession.sessionWrapped -> do
           worker <- async $ do
-            result <- try $ do
-              words <- manager.managerGenerator state.stateSession target
-              -- Force the result spine and Text values in the worker, keeping
-              -- delayed provider exceptions away from the actor's pure fold.
-              _ <- evaluate (sum (map Text.length words))
-              pure words
-            atomically $ writeTQueue inbox (Generated token target (case result of
-              Left (_ :: SomeException) -> Nothing
-              Right words -> Just words))
+            let attempt :: Int -> IO (Either Text [Text])
+                attempt n = do
+                  result <- try $ do
+                    generated <- manager.managerGenerator state.stateSession target
+                    -- Force the result spine and Text values in the worker, keeping
+                    -- delayed provider exceptions away from the actor's pure fold.
+                    _ <- evaluate (sum (map Text.length generated))
+                    pure generated
+                  case result of
+                    Right generated -> pure (Right generated)
+                    Left (failure :: SomeException)
+                      -- Cancellation (a newer generation, wrap-up, shutdown) must not be retried.
+                      | Just _ <- fromException @SomeAsyncException failure -> throwIO failure
+                      | n < generationAttempts -> do
+                          atomically $ writeTQueue inbox $ Diagnose token $ Diagnostic LevelWarning $
+                            "Branch generation failed (attempt " <> showText n <> " of " <> showText generationAttempts
+                              <> "), retrying: " <> describe failure
+                          threadDelay (retryDelayMicros n)
+                          attempt (n + 1)
+                      | otherwise -> pure $ Left $
+                          "Branch generation failed after " <> showText generationAttempts <> " attempts: " <> describe failure
+            outcome <- attempt 1
+            atomically $ writeTQueue inbox (Generated token target outcome)
           pure invalidated
             { stateCurrentWorker = Just worker
             , stateWorkers = worker : invalidated.stateWorkers }
         _ -> pure invalidated
+
+-- | Sends a server message to every active subscriber without touching the log.
+broadcast :: ActorState -> ServerMsg -> IO ()
+broadcast state message = atomically $ forM_ (Map.elems state.stateSubscribers) $ \subscription -> do
+  active <- readTVar subscription.subscriptionActive
+  when active (writeTQueue subscription.subscriptionOutput message)
+
+-- | Attempts per generation before giving up and reporting an error.
+generationAttempts :: Int
+generationAttempts = 3
+
+-- | Backoff before attempt @n + 1@: 0.25 s, then 0.75 s.
+retryDelayMicros :: Int -> Int
+retryDelayMicros n = 250000 * (2 * n - 1)
+
+describe :: SomeException -> Text
+describe = Text.take 300 . Text.pack . takeWhile (/= '\n') . displayException
+
+showText :: Show a => a -> Text
+showText = Text.pack . show
 
 isRunning :: Maybe a -> Bool
 isRunning Nothing = True

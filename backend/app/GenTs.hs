@@ -42,6 +42,7 @@ main = do
         , getTypeScriptDeclarations (Proxy :: Proxy ClientMsg)
         , getTypeScriptDeclarations (Proxy :: Proxy Event)
         , getTypeScriptDeclarations (Proxy :: Proxy Stamped)
+        , getTypeScriptDeclarations (Proxy :: Proxy DiagnosticLevel)
         , getTypeScriptDeclarations (Proxy :: Proxy ServerMsg)
         ]
     header =
