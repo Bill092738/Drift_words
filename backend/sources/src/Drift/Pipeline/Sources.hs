@@ -16,17 +16,16 @@ module Drift.Pipeline.Sources
   , sanitize
   ) where
 
-import Control.Concurrent.Async (concurrently_)
+import Control.Concurrent.Async (mapConcurrently)
 import Control.Concurrent.MVar (MVar, modifyMVar, newMVar)
 import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
-import Control.Monad (forM_, when)
-import Data.IORef (atomicModifyIORef', newIORef, readIORef)
+import Control.Monad (forM_, unless, when)
 import Data.List (sortOn)
 import Data.Maybe (catMaybes)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
-import Drift.Search.Http (Fetch)
+import Drift.Search.Http (Fetch, FetchError)
 import Drift.Search.OpenAlex (searchOpenAlex)
 import Drift.Search.Text (isWebUrl, normalizeKey)
 import Drift.Search.Types (Hit (..), SourceDraft (..), SourceRequest (..))
@@ -66,45 +65,73 @@ data Chosen = Chosen
   , seen :: Set.Set Text
   }
 
+-- | A result that passed the relevance check, with the position of its
+-- provider in the provider list, used to break ties.
+data Candidate = Candidate
+  { verdict :: Verdict
+  , providerIndex :: Int
+  , candidateHit :: Hit
+  }
+
+-- | Best score first, then the provider's own ranking, then provider order,
+-- so the order never depends on which provider answered first.
+candidateOrder :: Candidate -> (Double, Int, Int)
+candidateOrder c = (negate c.verdict.score, c.candidateHit.hitRank, c.providerIndex)
+
 -- | Finds up to 'envMaxPerEdge' sources for an edge, calling @emit@ once for
 -- each as soon as it is accepted, so sources land one at a time. Returns when
 -- the search is finished. It may call @emit@ zero times, which is normal.
 -- Network and parse failures are logged and dropped; cancelling the thread
 -- cancels the search.
 --
--- The best passing source of each provider is emitted first (one article and
--- one paper rather than two of the same kind); free places are filled from the
--- rest, best score first, after both providers have answered.
+-- The best passing source of each provider comes first (one article and one
+-- paper rather than two of the same kind); free places are filled from the
+-- rest, in 'candidateOrder', after every provider has answered.
+--
+-- When there is a place for every provider's best, each best is emitted as
+-- soon as its provider answers. When there are fewer places (for example
+-- 'envMaxPerEdge' = 1), the bests compete for them, so the pipeline waits for
+-- every provider and takes them in 'candidateOrder'. The result is then the
+-- same whichever provider answers first.
 findSources :: SourceEnv -> SourceRequest -> (SourceDraft -> IO ()) -> IO ()
 findSources env req emit = do
   chosen <- newMVar (Chosen 0 Set.empty)
-  leftovers <- newIORef []
-  concurrently_
-    (provider chosen leftovers "wikipedia" (searchWikipedia env.envFetch req.lang query 5))
-    (provider chosen leftovers "openalex" (searchOpenAlex env.envFetch env.envOpenAlexKey query 6))
-  rest <- readIORef leftovers
-  forM_ (sortOn (\(v, h) -> (negate v.score, h.hitRank)) rest) (accept chosen)
+  results <- mapConcurrently (provider chosen) (zip [0 ..] providers)
+  let bests = [c | c : _ <- results]
+      rest = concat [cs | _ : cs <- results]
+  unless streaming $ forM_ (sortOn candidateOrder bests) (accept chosen)
+  forM_ (sortOn candidateOrder rest) (accept chosen)
   where
     query = queryFor req
 
-    provider chosen leftovers name search = do
+    providers :: [(Text, IO (Either FetchError [Hit]))]
+    providers =
+      [ ("wikipedia", searchWikipedia env.envFetch req.lang query 5)
+      , ("openalex", searchOpenAlex env.envFetch env.envOpenAlexKey query 6)
+      ]
+
+    streaming = env.envMaxPerEdge >= length providers
+
+    -- Searches and judges one provider, and returns its passing results best
+    -- first. When streaming, the best is accepted here, as soon as it is known.
+    provider :: MVar Chosen -> (Int, (Text, IO (Either FetchError [Hit]))) -> IO [Candidate]
+    provider chosen (index, (name, search)) = do
       outcome <- safely search
       case outcome of
-        Left e -> env.envLog (name <> ": failed: " <> T.pack (show e))
-        Right (Left e) -> env.envLog (name <> ": " <> T.pack (show e))
+        Left e -> [] <$ env.envLog (name <> ": failed: " <> T.pack (show e))
+        Right (Left e) -> [] <$ env.envLog (name <> ": " <> T.pack (show e))
         Right (Right hits) -> do
-          judged <- mapM (\h -> (,h) <$> env.envJudge.judge req h) hits
-          let passing = sortOn (\(v, h) -> (negate v.score, h.hitRank)) [(v, h) | (v, h) <- judged, v.supports]
+          judged <- mapM (\h -> (\v -> Candidate v index h) <$> env.envJudge.judge req h) hits
+          let passing = sortOn candidateOrder [c | c <- judged, c.verdict.supports]
           env.envLog (name <> ": " <> T.pack (show (length passing)) <> " of " <> T.pack (show (length hits)) <> " passed")
           case passing of
-            [] -> pure ()
-            best : others -> do
-              accept chosen best
-              atomicModifyIORef' leftovers (\xs -> (others <> xs, ()))
+            best : _ | streaming -> accept chosen best
+            _ -> pure ()
+          pure passing
 
     -- Reserve a place under the lock, then do the slow work (the DOI lookup) outside it.
-    accept :: MVar Chosen -> (Verdict, Hit) -> IO ()
-    accept chosen (_, hit) = case sanitize hit.hitDraft of
+    accept :: MVar Chosen -> Candidate -> IO ()
+    accept chosen candidate = case sanitize hit.hitDraft of
       Nothing -> pure ()
       Just draft -> do
         let key = dedupeKey hit
@@ -117,6 +144,8 @@ findSources env req emit = do
             Just doi | env.envResolveCsl -> fetchCsl env.envFetch doi
             _ -> pure Nothing
           emit (maybe draft (\c -> draft {csl = Just c}) exact)
+      where
+        hit = candidate.candidateHit
 
 -- | The identity of a source, for dropping duplicates: its DOI, else its link,
 -- else its title.
