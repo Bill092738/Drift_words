@@ -19,6 +19,7 @@ export function Playground() {
   const hostRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<Engine | null>(null);
   const benchmarking = useRef(false);
+  const tilesRef = useRef(new Map<string, Tile>());
   const [kind, setKind] = useState<SceneKind>('small');
   const [renderer, setRenderer] = useState<RendererChoice>(initialRenderer);
   const [status, setStatus] = useState('starting engine…');
@@ -33,6 +34,7 @@ export function Playground() {
     let offFrame = (): void => {};
     let offIntent = (): void => {};
     const tiles = new Map<string, Tile>();
+    tilesRef.current = tiles;
 
     void createEngine(host, { perfOverlay: true, preferWebGPU: renderer === 'auto' }).then((e) => {
       // StrictMode mounts twice; the first engine may finish after its effect was cleaned up.
@@ -119,10 +121,21 @@ export function Playground() {
 
   const onBenchmark = (): void => {
     const canvas = hostRef.current?.querySelector('canvas');
-    if (!canvas || benchmarking.current) return;
+    const engine = engineRef.current;
+    if (!canvas || engine === null || benchmarking.current) return;
     benchmarking.current = true;
-    setBench('running for 10 s…');
-    void runBenchmark(canvas).then((r: BenchmarkResult) => {
+    setBench('warming up, then measuring for 10 s…');
+    const visibleCount = (): number => {
+      const v = engine.camera.viewport;
+      let n = 0;
+      for (const t of tilesRef.current.values()) {
+        const b = t.bounds();
+        if (b.minX <= v.maxX && b.maxX >= v.minX && b.minY <= v.maxY && b.maxY >= v.minY) n++;
+      }
+      return n;
+    };
+    const motionAnimated = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+    void runBenchmark({ canvas, camera: engine.camera, visibleCount, motionAnimated }).then((r: BenchmarkResult) => {
       benchmarking.current = false;
       setBench(describeBenchmark(r));
     });
