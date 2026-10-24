@@ -1,0 +1,111 @@
+{-# LANGUAGE OverloadedRecordDot #-}
+
+-- | Pure command validation and admission of an actor-owned branch result.
+module Drift.Domain.Decide (decide, offerBranches) where
+
+import Control.Monad (unless, when)
+import Data.Char (isSpace)
+import Data.List (foldl')
+import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
+import Data.Text (Text)
+import qualified Data.Text as Text
+import Drift.Domain.Types
+import Drift.Domain.Word (cap, wordKey)
+import Drift.Protocol
+
+decide :: Session -> Command -> Either Rejection [Event]
+decide s command = case command of
+  -- Placement and repeated wrap-up remain legal after wrapping.
+  PlaceNode n position rotation -> do
+    require (Map.member n s.sessionNodes) "Cannot place an unknown node."
+    validPlacement position rotation
+    pure [NodePlaced n position rotation]
+  PlaceSource sid position rotation -> do
+    require (Map.member sid s.sessionSources) "Cannot place an unknown source."
+    validPlacement position rotation
+    pure [SourcePlaced sid position rotation]
+  WrapUp -> pure (if s.sessionWrapped then [] else [WrappedUp])
+  _ -> do
+    require (not s.sessionWrapped) "The session is wrapped up; exploration and curation are closed."
+    explore command
+  where
+    explore = \case
+      Pick cid -> do
+        c <- maybe (Left (Rejection "That candidate is not currently available.")) Right
+          (Map.lookup cid s.sessionCandidates)
+        unvisited s c.word
+        let origin = if s.sessionFocus == Nothing then Cloud else Branch
+        pure [NodeChosen s.sessionNextNodeId s.sessionFocus c.word origin (Just cid)]
+      StartWithWord input -> do
+        require (Map.null s.sessionNodes) "A starting word is only allowed before the first node."
+        word <- validWord input
+        unvisited s word
+        pure [NodeChosen s.sessionNextNodeId Nothing word StartWord Nothing]
+      InsertWord input -> do
+        parent <- maybe (Left (Rejection "Choose a word before inserting a child.")) Right s.sessionFocus
+        word <- validWord input
+        unvisited s word
+        pure [NodeChosen s.sessionNextNodeId (Just parent) word Insert Nothing]
+      Backtrack n -> do
+        require (Map.member n s.sessionNodes) "Cannot revisit an unknown node."
+        pure [NodeRevisited n]
+      SetDivergence d -> do
+        require (finite d && d >= 0 && d <= 1) "Divergence must be a finite number between 0 and 1."
+        pure [DivergenceSet d]
+      Promote eid levels -> do
+        knownEntry eid
+        require (levels > 0) "Promotion levels must be positive."
+        pure [EntryPromoted eid levels]
+      Strike eid -> knownEntry eid >> pure [EntryStruck eid]
+      Restore eid -> knownEntry eid >> pure [EntryRestored eid]
+      -- Exhaustive handling keeps additions to Command visible to -Wall.
+      PlaceNode n position rotation -> decide s (PlaceNode n position rotation)
+      PlaceSource sid position rotation -> decide s (PlaceSource sid position rotation)
+      WrapUp -> decide s WrapUp
+    knownEntry eid = require (Map.member eid s.sessionEntries) "That sidebar entry does not exist."
+
+-- | Validate all IDs before filtering words. Previously visible IDs cannot be
+-- recycled even when their new word would otherwise be filtered out.
+-- Generation tokens belong to the actor: a node ID alone cannot distinguish
+-- a stale result from a previous generation for the same focus node.
+offerBranches :: Session -> NodeId -> [Candidate] -> Either Rejection [Event]
+offerBranches s n candidates = do
+  require (not s.sessionWrapped) "The session is wrapped up; no new branches can be offered."
+  require (s.sessionFocus == Just n) "Branches no longer belong to the current focus."
+  let ids = map (\c -> c.candidateId) candidates
+      uniqueIds = Set.fromList ids
+  require (Set.size uniqueIds == length ids) "A branch result contains duplicate candidate IDs."
+  require (Set.null (Set.intersection uniqueIds s.sessionSeenCandidates))
+    "A branch result reuses a previously visible candidate ID."
+  let (_, reversed) = foldl' admit (Set.empty, []) candidates
+      accepted = reverse reversed
+  pure (map (CandidateStreamed n) accepted <> [BranchesOffered n accepted])
+  where
+    admit (seenWords, accepted) c =
+      let key = wordKey c.word
+          count = Map.findWithDefault 0 key s.sessionAppearances
+       in if Set.member key seenWords || Set.member key s.sessionVisited || count >= cap s.sessionDivergence
+          then (Set.insert key seenWords, accepted)
+          else (Set.insert key seenWords, c : accepted)
+
+validWord :: Text -> Either Rejection Text
+validWord input = do
+  let word = Text.strip input
+  require (not (Text.null word)) "Enter a nonempty word."
+  require (not (Text.any isSpace word)) "Enter exactly one word without internal whitespace."
+  pure word
+
+unvisited :: Session -> Text -> Either Rejection ()
+unvisited s word = when (Set.member (wordKey word) s.sessionVisited)
+  (Left (Rejection "That word has already been chosen."))
+
+validPlacement :: Vec2 -> Double -> Either Rejection ()
+validPlacement (Vec2 px py) rotation =
+  require (all finite [px, py, rotation]) "Position coordinates and angle must be finite numbers."
+
+finite :: Double -> Bool
+finite n = not (isNaN n || isInfinite n)
+
+require :: Bool -> Text -> Either Rejection ()
+require condition reason = unless condition (Left (Rejection reason))
