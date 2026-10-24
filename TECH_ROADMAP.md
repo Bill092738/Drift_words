@@ -322,7 +322,7 @@ The animation feel is a core feature, so motion is a subsystem of its own rather
 ### 5.7 Chrome
 
 - **Sidebar.** On desktop it is a DOM panel whose open and close motion is driven by the same spring system. Collapsed, it appears as a tab-like object at the edge of the desk. On mobile it becomes a bottom sheet with snap points, which answers that open question in idea.md.
-- **Content.** Entries with priority levels, strike-through and restore, the reference list, and a low-emphasis list of source objects, all rendered from the store.
+- **Content.** Entries with priority levels, strike-through and restore, the reference list, and a low-emphasis list of source objects, all rendered from the store. While exploring, references are previewed by a small client-side APA formatter over each source's CSL-JSON; `citeproc` renders the authoritative lists in the outputs (M8). Repeated promote clicks within about half a second are sent as one multi-level `Promote`.
 - **Controls.** The divergence slider, a single-word input that rejects spaces, and the wrap-up button.
 - **Outputs view.** An interactive decision tree, tabs for the draft and the final, and export downloads.
 

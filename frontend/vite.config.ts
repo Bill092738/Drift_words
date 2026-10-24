@@ -10,6 +10,10 @@ export default defineConfig({
       '/api': { target: 'http://localhost:8080', ws: true },
     },
   },
+  build: {
+    // PixiJS alone is ~170 KB gzipped; the budget is 350 KB gzipped for initial JS (TECH_ROADMAP 5.8).
+    chunkSizeWarningLimit: 700,
+  },
   test: {
     environment: 'node',
   },
