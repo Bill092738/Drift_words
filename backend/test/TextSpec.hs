@@ -23,6 +23,19 @@ spec = describe "Drift.Search.Text" $ do
       plainText "  a \n\t b  " `shouldBe` "a b"
 
   describe "normalizeDoi" $ do
+    it "decodes resolver paths exactly once and preserves literal plus signs" $ do
+      normalizeDoi "HTTPS://DOI.ORG/10.1234/A%3Fb%23C%25D+E?download=1#top"
+        `shouldBe` Just "10.1234/a?b#c%d+e"
+      normalizeDoi "http://dx.doi.org/10.1234/A%253Fb" `shouldBe` Just "10.1234/a%3fb"
+    it "rejects malformed resolver escapes and invalid decoded UTF-8 without throwing" $ do
+      normalizeDoi "https://doi.org/10.1234/a%" `shouldBe` Nothing
+      normalizeDoi "https://doi.org/10.1234/a%GG" `shouldBe` Nothing
+      normalizeDoi "https://doi.org/10.1234/a%FF" `shouldBe` Nothing
+      normalizeDoi "https://doi.org/10.1234/a%C3" `shouldBe` Nothing
+    it "does not percent-decode bare DOI metadata or non-resolver URLs" $ do
+      normalizeDoi "10.1234/a%3Fb" `shouldBe` Just "10.1234/a%3fb"
+      normalizeDoi "https://example.org/10.1234/a%3Fb" `shouldBe` Nothing
+      normalizeDoi "https://doi.org.evil.org/10.1234/a%3Fb" `shouldBe` Nothing
     it "strips resolver prefixes and lower-cases" $ do
       normalizeDoi "https://doi.org/10.1038/35015639" `shouldBe` Just "10.1038/35015639"
       normalizeDoi "http://dx.doi.org/10.1002/2014JE004755" `shouldBe` Just "10.1002/2014je004755"

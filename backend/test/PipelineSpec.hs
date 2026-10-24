@@ -167,6 +167,11 @@ spec = describe "Drift.Pipeline.Sources" $ do
       any ("openalex: " `T.isPrefixOf`) ls `shouldBe` True
 
   describe "duplicates" $ do
+    it "gives percent-encoded DOI resolver URLs the same identity as DOI metadata" $ do
+      let encoded = Hit "test" (draft "https://doi.org/10.1234/a%3Fb" "Reference") "" Nothing 0
+          metadata = Hit "test" (draft "https://publisher.org/article" "Reference") "" (Just "10.1234/a?b") 0
+      dedupeKey encoded `shouldBe` "doi:10.1234/a?b"
+      dedupeKey metadata `shouldBe` "doi:10.1234/a?b"
     it "normalizes URL scheme and host while preserving case-sensitive components" $ do
       let hit = Hit "test" (draft "HTTPS://User:Pass@EXAMPLE.ORG/A?Token=Ab#Section" "Reference") "" Nothing 0
       dedupeKey hit `shouldBe` "url:https://User:Pass@example.org/A?Token=Ab#Section"

@@ -101,6 +101,10 @@ spec = do
       let stored = (sourceAt 1 2) {csl = Just (object ["DOI" .= ("10.1234/ABC" :: Text.Text)])}
       rejected (admitSource (apply edge (SourceFound stored)) (NodeId 2)
         (draft {Search.url = "https://doi.org/10.1234/abc"}))
+    it "rejects a percent-encoded DOI resolver path already present in CSL metadata" $ do
+      let stored = (sourceAt 1 2) {csl = Just (object ["DOI" .= ("10.1234/a?b" :: Text.Text)])}
+      rejected (admitSource (apply edge (SourceFound stored)) (NodeId 2)
+        (draft {Search.url = "https://doi.org/10.1234/a%3Fb"}))
     it "falls back to normalized titles for source identity without a URL or DOI" $ do
       let stored = (sourceAt 1 2) {url = "", title = "Straße"}
       rejected (admitSource (apply edge (SourceFound stored)) (NodeId 2)
