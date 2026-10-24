@@ -28,7 +28,7 @@ import Data.Maybe (mapMaybe)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Text.Normalize (NormalizationMode (NFKC), normalize)
+import Drift.Domain.Word (cap, wordKey)
 
 type Embedding = [Double]
 
@@ -97,8 +97,10 @@ validCandidate candidate =
 isMark :: Char -> Bool
 isMark c = generalCategory c `elem` [NonSpacingMark, SpacingCombiningMark, EnclosingMark]
 
+-- | The session's word identity ("Drift.Domain.Word"), so the pipeline and
+-- the session engine agree on which words are the same.
 normalizeWord :: Text -> Text
-normalizeWord = T.toCaseFold . normalize NFKC . T.strip
+normalizeWord = wordKey
 
 -- | Apply loop prevention and stable per-batch de-duplication. Comparisons use
 -- normalized keys, but words are returned as the model wrote them (trimmed),
@@ -108,7 +110,7 @@ filterCandidates context candidates = reverse accepted
  where
   normalizedChosen = Set.insert (normalizeWord context.currentWord) (Set.map normalizeWord context.chosenWords)
   normalizedCounts = Map.fromListWith (+) [(normalizeWord word, count) | (word, count) <- Map.toList context.appearanceCounts]
-  cap = repeatCap context.divergence
+  limit = repeatCap context.divergence
   (_, accepted) = foldl' step (Set.empty, []) candidates
 
   step (seen, result) candidate =
@@ -117,15 +119,14 @@ filterCandidates context candidates = reverse accepted
           not (T.null key)
             && validCandidate key
             && Set.notMember key normalizedChosen
-            && Map.findWithDefault 0 key normalizedCounts < cap
+            && Map.findWithDefault 0 key normalizedCounts < limit
             && Set.notMember key seen
      in if permitted then (Set.insert key seen, T.strip candidate : result) else (seen, result)
 
--- | Offered-but-unchosen words may recur four times at minimum divergence and
--- only once at maximum divergence. Clamping makes the pure helper total while
--- external command/config boundaries remain responsible for rejecting bad input.
+-- | How often an offered-but-unchosen word may reappear: the session's 'cap'
+-- ("Drift.Domain.Word"), three times at low divergence down to once at maximum.
 repeatCap :: Double -> Int
-repeatCap value = 1 + floor (3 * (1 - clamp01 value))
+repeatCap = cap
 
 cosineDistance :: Embedding -> Embedding -> Maybe Double
 cosineDistance left right

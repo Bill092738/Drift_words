@@ -29,9 +29,13 @@ export interface MockServerOptions {
   notes?: boolean;
 }
 
-/** Offered-but-unchosen words may reappear at most this many times. */
+/**
+ * Offered-but-unchosen words may reappear at most this many times. Same curve
+ * as the backend's `cap` in backend/src/Drift/Domain/Word.hs.
+ */
 export function repeatCap(divergence: number): number {
-  return Math.max(1, Math.round(3 - 2 * divergence));
+  const d = Number.isNaN(divergence) ? 0.5 : Math.min(1, Math.max(0, divergence));
+  return 3 - Math.floor(2 * d);
 }
 
 /** A single word: no whitespace, 1 to 40 characters. */
