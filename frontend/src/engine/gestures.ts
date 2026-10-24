@@ -1,14 +1,12 @@
 import type { Vec } from './api.ts';
 
-/** Movement beyond this many pixels turns a press into a drag. */
-export const TAP_SLOP = 8;
-/** Presses held longer than this are not taps. */
-export const TAP_MAX_MS = 500;
-/** Release velocity is measured over this many milliseconds before the release. */
-export const FLING_WINDOW_MS = 100;
-/** Slower releases do not fling (pixels per second). */
-export const MIN_FLING_SPEED = 100;
-export const MAX_FLING_SPEED = 6000;
+import { motion } from './config.ts';
+
+export const TAP_SLOP = motion.tap.slopPx;
+export const TAP_MAX_MS = motion.tap.maxMs;
+export const FLING_WINDOW_MS = motion.fling.windowMs;
+export const MIN_FLING_SPEED = motion.fling.minSpeed;
+export const MAX_FLING_SPEED = motion.fling.maxSpeed;
 
 export interface GestureHandlers {
   /** Drag delta in screen pixels. */
@@ -169,6 +167,6 @@ export function releaseVelocity(samples: readonly Sample[], releaseTime: number)
 /** Zoom multiplier for a wheel event. Trackpad pinch arrives as `ctrlKey` with small deltas. */
 export function wheelZoomFactor(deltaY: number, deltaMode: number, ctrlKey: boolean): number {
   const pixels = deltaMode === 1 ? deltaY * 16 : deltaMode === 2 ? deltaY * 400 : deltaY;
-  const sensitivity = ctrlKey ? 0.01 : 0.0015;
+  const sensitivity = ctrlKey ? motion.wheel.pinchSensitivity : motion.wheel.sensitivity;
   return Math.exp(-pixels * sensitivity);
 }

@@ -1,4 +1,5 @@
 import { type Spring, type SpringConfig, springs } from './api.ts';
+import { motion } from './config.ts';
 
 /** Integration step. Springs are advanced in fixed steps so dropped frames do not change the motion. */
 const STEP = 1 / 240;
@@ -52,7 +53,9 @@ export class SpringImpl implements Spring {
       this.remainder = 0;
       return;
     }
-    const response = this.reducedMotion ? this.config.response / 2 : this.config.response;
+    const response = this.reducedMotion
+      ? this.config.response * motion.reduced.responseScale
+      : this.config.response;
     const fraction = this.reducedMotion
       ? Math.max(1, this.config.dampingFraction)
       : this.config.dampingFraction;

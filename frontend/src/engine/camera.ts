@@ -1,14 +1,12 @@
 import { type Camera, type Rect, type SpringConfig, type Vec, springs } from './api.ts';
+import { motion } from './config.ts';
 import { SpringImpl } from './spring.ts';
 
-export const MIN_ZOOM = 0.05;
-export const MAX_ZOOM = 8;
-/** Exponential decay rate of a fling, per second. Velocity halves about every 0.17 s. */
-export const FLING_FRICTION = 4;
-/** A fling ends when it is slower than this (pixels per second). */
-const FLING_REST_SPEED = 8;
-/** Wheel zoom eases with this spring; critically damped so it never overshoots. */
-const WHEEL_ZOOM: SpringConfig = { response: 0.22, dampingFraction: 1 };
+export const MIN_ZOOM = motion.zoom.min;
+export const MAX_ZOOM = motion.zoom.max;
+export const FLING_FRICTION = motion.fling.friction;
+const FLING_REST_SPEED = motion.fling.restSpeed;
+const WHEEL_ZOOM: SpringConfig = motion.wheel.spring;
 
 const clampZoom = (z: number): number => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
 

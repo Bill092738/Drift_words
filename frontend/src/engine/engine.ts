@@ -1,41 +1,38 @@
-import { Application, Container } from 'pixi.js';
+import { Application, Container, UPDATE_PRIORITY } from 'pixi.js';
 import type {
   CreateEngine,
-  Drawable,
   Engine,
   FrameInfo,
   Intent,
   LayerName,
-  Rect,
   Spring,
   SpringConfig,
   Vec,
 } from './api.ts';
 import { CameraImpl } from './camera.ts';
+import { motion, quality } from './config.ts';
 import { GestureRecognizer, wheelZoomFactor } from './gestures.ts';
+import { registerInternals } from './internals.ts';
+import { PerfOverlay } from './perf.ts';
+import { LAYERS, Scene } from './scene.ts';
 import { SpringImpl } from './spring.ts';
-
-/** Back to front. */
-const LAYERS: readonly LayerName[] = ['sources', 'edges', 'words', 'focus', 'hud'];
-/** Frames longer than this are treated as this long, so a background tab does not cause a jump. */
-const MAX_DT = 0.1;
-
-const intersects = (a: Rect, b: Rect): boolean =>
-  a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
-
-const contains = (r: Rect, p: Vec): boolean =>
-  p.x >= r.minX && p.x <= r.maxX && p.y >= r.minY && p.y <= r.maxY;
 
 const prefersDark = (): boolean =>
   typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches;
 
-interface Entry {
-  layer: LayerName;
-  drawable: Drawable;
+/** The renderer that is actually in use. WebGL reports its version, so a WebGL1 fallback is visible. */
+function rendererLabel(renderer: Application['renderer']): string {
+  if (renderer.name !== 'webgl') return renderer.name;
+  const gl = (renderer as unknown as { context?: { webGLVersion?: number } }).context;
+  return gl?.webGLVersion === undefined ? 'webgl' : `webgl${gl.webGLVersion}`;
 }
 
 export const createEngine: CreateEngine = async (host, options = {}) => {
-  const { preferWebGPU = true, maxResolution = 2 } = options;
+  const {
+    preferWebGPU = true,
+    maxResolution = quality.maxResolution,
+    perfOverlay = false,
+  } = options;
 
   const app = new Application();
   await app.init({
@@ -44,7 +41,7 @@ export const createEngine: CreateEngine = async (host, options = {}) => {
     preference: preferWebGPU ? 'webgpu' : 'webgl',
     resolution: Math.min(window.devicePixelRatio || 1, maxResolution),
     autoDensity: true,
-    antialias: true,
+    antialias: quality.antialias,
     background: prefersDark() ? 0x151517 : 0xf6f5f2,
   });
   host.appendChild(app.canvas);
@@ -52,6 +49,8 @@ export const createEngine: CreateEngine = async (host, options = {}) => {
   app.canvas.style.display = 'block';
 
   const camera = new CameraImpl();
+  const scene = new Scene();
+  const overlay = perfOverlay ? new PerfOverlay(host, rendererLabel(app.renderer)) : null;
 
   // The world container follows the camera; the hud container stays in screen space.
   const world = new Container();
@@ -63,10 +62,7 @@ export const createEngine: CreateEngine = async (host, options = {}) => {
   }
   app.stage.addChildAt(world, 0);
 
-  const members = {} as Record<LayerName, Map<string, Drawable>>;
-  for (const name of LAYERS) members[name] = new Map();
-  const entries = new Map<string, Entry>();
-
+  const layerOf = new Map<string, LayerName>();
   const springList = new Set<WeakRef<SpringImpl>>();
   const frameCallbacks = new Set<(frame: FrameInfo) => void>();
   const intentCallbacks = new Set<(intent: Intent) => void>();
@@ -77,23 +73,8 @@ export const createEngine: CreateEngine = async (host, options = {}) => {
     for (const cb of intentCallbacks) cb(intent);
   };
 
-  // Linear scans for now; milestone work later replaces them with an rbush index.
-  const hitTest = (screen: Vec): string | null => {
-    const worldPoint = camera.screenToWorld(screen);
-    for (let i = LAYERS.length - 1; i >= 0; i--) {
-      const layer = LAYERS[i]!;
-      const point = layer === 'hud' ? screen : worldPoint;
-      let hit: string | null = null;
-      for (const d of members[layer].values()) {
-        if (d.interactive && contains(d.bounds(), point)) hit = d.id; // later = on top
-      }
-      if (hit !== null) return hit;
-    }
-    return null;
-  };
-
   const handleTap = (screen: Vec): void => {
-    const id = hitTest(screen);
+    const id = scene.hit(screen, camera.screenToWorld(screen));
     if (id === null) {
       selectedId = null;
       emit({ type: 'background', at: camera.screenToWorld(screen) });
@@ -139,7 +120,11 @@ export const createEngine: CreateEngine = async (host, options = {}) => {
   canvas.addEventListener(
     'pointerdown',
     (e) => {
-      canvas.setPointerCapture(e.pointerId);
+      try {
+        canvas.setPointerCapture(e.pointerId);
+      } catch {
+        // Synthetic pointers (tests, scripted input) have no capturable id.
+      }
       camera.stopFling(); // touching the desk stops it coasting
       gestures.pointerDown(e.pointerId, local(e), e.timeStamp);
     },
@@ -165,8 +150,16 @@ export const createEngine: CreateEngine = async (host, options = {}) => {
     { signal: abort.signal, passive: false },
   );
 
+  // Frame accounting for the overlay: `logic` is this callback; `render` is what
+  // runs after it up to a final low-priority callback, which includes Pixi's render.
+  let logicStart = 0;
+  let logicEnd = 0;
+  let frameMs = 0;
+
   app.ticker.add((ticker) => {
-    const dt = Math.min(ticker.deltaMS / 1000, MAX_DT);
+    logicStart = performance.now();
+    frameMs = ticker.elapsedMS;
+    const dt = Math.min(ticker.deltaMS / 1000, motion.maxFrameSeconds);
     time += dt;
 
     for (const ref of springList) {
@@ -182,32 +175,38 @@ export const createEngine: CreateEngine = async (host, options = {}) => {
     const c = camera.center;
     world.scale.set(z);
     world.position.set(app.screen.width / 2 - c.x * z, app.screen.height / 2 - c.y * z);
-
-    const viewport = camera.viewport;
-    for (const name of LAYERS) {
-      if (name === 'hud') continue;
-      for (const d of members[name].values()) d.view.visible = intersects(d.bounds(), viewport);
-    }
+    scene.cull(camera.viewport);
+    logicEnd = performance.now();
   });
+
+  if (overlay !== null) {
+    app.ticker.add(
+      () => {
+        const end = performance.now();
+        overlay.record(frameMs, logicEnd - logicStart, end - logicEnd, scene.visible, scene.total);
+      },
+      undefined,
+      UPDATE_PRIORITY.UTILITY,
+    );
+  }
 
   const engine: Engine = {
     camera,
     add(layer, drawable) {
-      if (entries.has(drawable.id)) throw new Error(`drawable "${drawable.id}" already added`);
-      entries.set(drawable.id, { layer, drawable });
-      members[layer].set(drawable.id, drawable);
+      scene.add(layer, drawable);
+      layerOf.set(drawable.id, layer);
       containers[layer].addChild(drawable.view);
     },
     remove(id) {
-      const entry = entries.get(id);
-      if (entry === undefined) return;
-      entries.delete(id);
-      members[entry.layer].delete(id);
-      containers[entry.layer].removeChild(entry.drawable.view);
+      const drawable = scene.remove(id);
+      if (drawable === undefined) return;
+      const layer = layerOf.get(id);
+      layerOf.delete(id);
+      if (layer !== undefined) containers[layer].removeChild(drawable.view);
       if (selectedId === id) selectedId = null;
     },
-    moved() {
-      // Nothing to re-index until the spatial index lands.
+    moved(id) {
+      scene.moved(id);
     },
     spring(initial: number, config?: SpringConfig): Spring {
       const s = new SpringImpl(initial, config);
@@ -227,8 +226,10 @@ export const createEngine: CreateEngine = async (host, options = {}) => {
       abort.abort();
       frameCallbacks.clear();
       intentCallbacks.clear();
+      overlay?.destroy();
       app.destroy({ removeView: true }, { children: true });
     },
   };
+  registerInternals(engine, { resolution: app.renderer.resolution });
   return engine;
 };
