@@ -31,15 +31,17 @@ export interface TileSpec {
   motion: TileMotion;
 }
 
-const SYLLABLES = ['dri', 'ft', 'wor', 'ra', 'lo', 'mi', 'san', 'tu', 'ne', 'qua', 'bel', 'ion'];
-const CJK = ['漂流', '词语', '海', '光', '记忆'];
+/** Plain English words, so the test scene reads like the real desk. */
+const WORDS = [
+  'drift', 'harbor', 'lantern', 'meadow', 'echo', 'compass', 'ember', 'orbit', 'willow', 'canyon',
+  'velvet', 'tide', 'signal', 'marble', 'thunder', 'paper', 'garden', 'mirror', 'anchor', 'feather',
+  'glacier', 'whisper', 'engine', 'island', 'copper', 'shadow', 'river', 'window', 'harvest', 'summit',
+  'ripple', 'lighthouse', 'forest', 'silver', 'journey', 'pebble', 'cascade', 'horizon', 'cobalt', 'ocean',
+  'maple', 'beacon', 'puzzle', 'sparrow', 'voyage', 'quartz', 'bridge', 'candle', 'dawn', 'story',
+];
 
 function makeWord(rand: () => number): string {
-  if (rand() < 0.08) return CJK[Math.floor(rand() * CJK.length)]!;
-  const n = 1 + Math.floor(rand() * 3);
-  let s = '';
-  for (let i = 0; i < n; i++) s += SYLLABLES[Math.floor(rand() * SYLLABLES.length)]!;
-  return s;
+  return WORDS[Math.floor(rand() * WORDS.length)]!;
 }
 
 /**

@@ -44,7 +44,7 @@ describe('generateScene', () => {
     }
   });
 
-  it('contains CJK labels', () => {
-    expect(generateScene('desktop').some((t) => /[一-鿿]/.test(t.label))).toBe(true);
+  it('uses plain English words only', () => {
+    for (const t of generateScene('desktop')) expect(t.label).toMatch(/^[a-z]+$/);
   });
 });
