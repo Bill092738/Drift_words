@@ -3,8 +3,8 @@
 -- | One serialized writer per session. The registry belongs to one manager;
 -- callers must not run two live managers against the same session database.
 module Drift.Server.SessionActor
-  ( BranchGenerator, Manager, Subscription
-  , newManager, createManagedSession, subscribeSession
+  ( BranchGenerator, CloudGenerator, Manager, Subscription
+  , newManager, newManagerWithCloud, createManagedSession, subscribeSession
   , newManagerWithAppendObserver, subscribeSessionWithJoinObserver
   , submit, receive, unsubscribe, stopManager
   ) where
@@ -28,9 +28,14 @@ import Drift.Model.SessionMock (BranchGenerator, mockCloud)
 import Drift.Protocol
 import Drift.Store.SQLite
 
+-- | The words of a new session's starting cloud. It may take a while (a model
+-- call) and must not throw; it runs before any lock is taken.
+type CloudGenerator = Lang -> IO [Text]
+
 data Manager = Manager
   { managerStore :: Store
   , managerGenerator :: BranchGenerator
+  , managerCloud :: CloudGenerator
   , managerRegistry :: MVar Registry
   , managerAppendObserver :: SessionId -> [Event] -> Either StoreException () -> IO ()
   }
@@ -72,8 +77,15 @@ data ActorState = ActorState
   , stateWorkers :: [Async ()]
   }
 
+-- | A manager whose sessions start from the offline cloud ("Drift.Model.SessionMock").
 newManager :: Store -> BranchGenerator -> IO Manager
 newManager store generator = newManagerWithAppendObserver store generator (\_ _ _ -> pure ())
+
+-- | A manager whose sessions start from the given cloud generator.
+newManagerWithCloud :: Store -> BranchGenerator -> CloudGenerator -> IO Manager
+newManagerWithCloud store generator cloud = do
+  manager <- newManager store generator
+  pure manager {managerCloud = cloud}
 
 -- | Test seam, never sent over the wire. The observer runs after each append
 -- attempt and must return normally; production wiring uses newManager.
@@ -82,28 +94,32 @@ newManagerWithAppendObserver
   -> (SessionId -> [Event] -> Either StoreException () -> IO ()) -> IO Manager
 newManagerWithAppendObserver store generator observer = do
   registry <- newMVar (Running Map.empty)
-  pure (Manager store generator registry observer)
+  pure (Manager store generator (pure . mockCloud) registry observer)
 
 -- | A collision is retried against the durable uniqueness constraint. No
 -- process-local counter or clock value is trusted to prove global uniqueness.
 -- Storage failures propagate; stopped creation throws an IOException.
 createManagedSession :: Manager -> Lang -> IO SessionId
-createManagedSession manager language = modifyMVarMasked manager.managerRegistry $ \case
-  Stopped _ -> throwIO (userError "The session manager is stopped.")
-  Running actors -> do
-    (sid, history) <- createFresh
-    actor <- startActor manager sid history
-    pure (Running (Map.insert sid actor actors), sid)
+createManagedSession manager language = do
+  -- The cloud can take seconds (a model call), so it is made before the
+  -- registry lock, which every connection takes.
+  words' <- manager.managerCloud language
+  modifyMVarMasked manager.managerRegistry $ \case
+    Stopped _ -> throwIO (userError "The session manager is stopped.")
+    Running actors -> do
+      (sid, history) <- createFresh words'
+      actor <- startActor manager sid history
+      pure (Running (Map.insert sid actor actors), sid)
   where
-    createFresh = do
+    createFresh words' = do
       now <- unixMillis
       unique <- hashUnique <$> newUnique
       let sid = SessionId ("session-" <> Text.pack (show now) <> "-" <> Text.pack (show unique))
-          cloud = zipWith Candidate (map CandidateId [1 ..]) (mockCloud language)
+          cloud = zipWith Candidate (map CandidateId [1 ..]) words'
           history = [Stamped 1 now (CloudSpawned language cloud)]
       (createSession manager.managerStore sid history >> pure (sid, history))
         `catch` \failure -> case failure of
-          SessionAlreadyExists _ -> createFresh
+          SessionAlreadyExists _ -> createFresh words'
           _ -> throwIO (failure :: StoreException)
 
 -- | Snapshot and registration are one actor message. The registry lock also
