@@ -6,7 +6,7 @@
 --
 -- The real 'Fetch' adds what every polite client needs: a User-Agent that says
 -- who is calling, a timeout, a minimum gap between requests to one host, a
--- short cache, and a stop when a host says it is out of budget (HTTP 429).
+-- short cache of bounded size, and a pause when a host answers HTTP 429.
 module Drift.Search.Http
   ( Fetch (..)
   , HttpRequest (..)
@@ -15,6 +15,8 @@ module Drift.Search.Http
   , HttpConfig (..)
   , defaultHttpConfig
   , newFetch
+  , rateLimitWait
+  , storeInCache
   ) where
 
 import Control.Concurrent (threadDelay)
@@ -23,6 +25,7 @@ import Control.Exception (try)
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.CaseInsensitive as CI
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
+import Data.List (sortOn)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.String (fromString)
@@ -69,6 +72,8 @@ data HttpConfig = HttpConfig
   , minGapMillis :: Text -> Int
   -- ^ minimum time between requests to a host
   , cacheSeconds :: Int
+  , cacheMaxEntries :: Int
+  -- ^ the cache never holds more than this many responses
   }
 
 defaultHttpConfig :: HttpConfig
@@ -81,6 +86,7 @@ defaultHttpConfig =
         "doi.org" -> 100
         _ -> 100
     , cacheSeconds = 3600
+    , cacheMaxEntries = 512
     }
 
 -- | Per-host state, shared by every call of one 'Fetch'.
@@ -137,12 +143,12 @@ perform cfg manager shared rq = do
                 then do
                   stamp <- getMonotonicTimeNSec
                   let expires = stamp + fromIntegral cfg.cacheSeconds * 1000000000
-                  atomicModifyIORef' shared.cache (\m -> (Map.insert key (expires, resp) m, ()))
+                  atomicModifyIORef' shared.cache (\m -> (storeInCache cfg.cacheMaxEntries stamp key (expires, resp) m, ()))
                   pure (Right resp)
                 else
                   if status == 429
                     then do
-                      let wait = retryAfterSeconds resp
+                      let wait = rateLimitWait resp.respHeaders
                       stamp <- getMonotonicTimeNSec
                       atomicModifyIORef'
                         shared.blockedUntil
@@ -170,14 +176,36 @@ classify = \case
   HC.HttpExceptionRequest _ HC.ConnectionTimeout -> Timeout
   e -> Network (T.pack (show e))
 
--- | OpenAlex sends the seconds until its budget resets in @x-ratelimit-reset@;
--- other hosts use @retry-after@. Capped at a day, defaulting to a minute.
-retryAfterSeconds :: HttpResponse -> Int
-retryAfterSeconds resp =
-  let find name = lookup name resp.respHeaders >>= readMaybe . T.unpack
-   in min 86400 (max 1 (maybe 60 id (find "retry-after" `orElse` find "x-ratelimit-reset")))
+-- | Adds a response to the cache. Expired entries are dropped on every
+-- insert, and if the cache is still over @limit@ the entries that expire
+-- first go, so memory stays bounded in a long-running server.
+storeInCache :: Int -> Word64 -> Text -> (Word64, HttpResponse) -> Map Text (Word64, HttpResponse) -> Map Text (Word64, HttpResponse)
+storeInCache limit now key entry m
+  | Map.size live <= limit = live
+  | otherwise = Map.fromList (drop (Map.size live - max 0 limit) (sortOn (fst . snd) (Map.toList live)))
   where
-    orElse a b = maybe b Just a
+    live = Map.insert key entry (Map.filter (\(expires, _) -> expires > now) m)
+
+-- | Seconds to leave a host alone after it answered 429, from the response's
+-- lower-cased headers. Capped at a day.
+--
+-- OpenAlex answers 429 in two cases: the daily budget is spent, or the client
+-- went over its per-second limit. Only the first is worth waiting out until
+-- the reset (midnight UTC), and @x-ratelimit-reset@ is on every response, so
+-- it is used only when @x-ratelimit-remaining@ says the budget is gone. A
+-- per-second 429 with budget left gets a short pause. Without any of these
+-- headers (other hosts), the wait is a minute.
+rateLimitWait :: [(Text, Text)] -> Int
+rateLimitWait headers =
+  min 86400 . max 1 $ case (number "retry-after", number "x-ratelimit-remaining") of
+    (Just seconds, _) -> ceiling seconds
+    (Nothing, Just remaining)
+      | remaining <= 0 -> maybe 60 ceiling (number "x-ratelimit-reset")
+      | otherwise -> 2
+    (Nothing, Nothing) -> 60
+  where
+    number :: Text -> Maybe Double
+    number name = lookup name headers >>= readMaybe . T.unpack . T.strip
 
 secondsBetween :: Word64 -> Word64 -> Int
 secondsBetween from to = fromIntegral ((to - from) `div` 1000000000) + 1
