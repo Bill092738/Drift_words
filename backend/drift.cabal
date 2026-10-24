@@ -19,13 +19,16 @@ library
   hs-source-dirs:   src
   exposed-modules:
     Drift.Api
+    Drift.Domain.Entries
     Drift.Model.Config
     Drift.Model.Mock
     Drift.Model.OpenAICompat
     Drift.Model.Provider
     Drift.Model.Scheduler
     Drift.Pipeline.Branches
+    Drift.Pipeline.Citations
     Drift.Pipeline.Prefetch
+    Drift.Pipeline.Writing
     Drift.Protocol
     Drift.Protocol.Options
   build-depends:
@@ -85,10 +88,13 @@ test-suite drift-test
   main-is:          Main.hs
   other-modules:
     BranchesSpec
+    CitationsSpec
+    EntriesSpec
     ModelProviderSpec
     PrefetchSpec
     ProtocolSpec
     SchedulerSpec
+    WritingSpec
   ghc-options:      -threaded
   build-depends:
     , aeson

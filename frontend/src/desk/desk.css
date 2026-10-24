@@ -1,0 +1,20 @@
+.desk {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background-color: var(--bg);
+  /* Dot grid; size and position follow the camera (set by the engine). */
+  background-image: radial-gradient(var(--desk-dot) 1.2px, transparent 1.2px);
+  background-size: 24px 24px;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.desk:active {
+  cursor: grabbing;
+}
+
+.desk canvas {
+  display: block;
+}
