@@ -2,7 +2,7 @@
 
 module SessionActorSpec (spec) where
 
-import Control.Concurrent.Async (AsyncCancelled, concurrently)
+import Control.Concurrent.Async (AsyncCancelled, async, cancel, concurrently, waitCatch)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Exception (bracket, catch, finally, throwIO)
@@ -141,8 +141,9 @@ spec = describe "Session actor" $ do
       map (\e -> e.seq) chosen `shouldBe` [2]
       map (\e -> e.event) chosen `shouldBe` [NodeChosen (NodeId 1) Nothing "root" StartWord Nothing]
 
-  it "rolls back an entire generated stream-and-seal batch if a later insert fails" $
-    withGates False $ \path store manager calls -> do
+  it "rolls back an entire generated stream-and-seal batch if a later insert fails" $ do
+    attempts <- newTQueueIO
+    withGatesObserved False (\_ batch result -> atomically (writeTQueue attempts (batch, result))) $ \path store manager calls -> do
       sid <- createManagedSession manager En
       sub <- connected manager sid
       initial <- events sub
@@ -152,9 +153,14 @@ spec = describe "Session actor" $ do
       withRaw path $ \connection -> SQL.execute_ connection
         "CREATE TRIGGER reject_fourth BEFORE INSERT ON events WHEN NEW.seq = 4 BEGIN SELECT RAISE(ABORT, 'stream failure'); END"
       putMVar (gateWords gate) ["alpha", "beta"]
-      -- A subsequent command serves as a barrier after the failed internal batch.
-      -- Wait for the worker to finish, then a subscription replay verifies durability;
-      -- polling is bounded and never assumes a sleep is a commit boundary.
+      -- The observer acknowledges the actual store outcome, so no quiet interval
+      -- or scheduler assumption can stand in for the failed append attempt.
+      (failedBatch, outcome) <- nextGeneratedAttempt attempts
+      length failedBatch `shouldBe` 3
+      case outcome of
+        Left (StorageFailure _) -> pure ()
+        other -> expectationFailure (show other)
+      loadEvents store sid `shouldReturn` Just (initial <> chosen)
       noMessage sub
       submit sub (ClientMsg 2 (SetDivergence 0.4))
       changed <- events sub
@@ -167,6 +173,78 @@ spec = describe "Session actor" $ do
       putMVar (gateWords retryGate) ["alpha", "beta"]
       offers <- events sub
       length offers `shouldBe` 3
+
+  it "deactivates a cancelled queued Join before the actor can register it" $ do
+    entered <- newEmptyMVar
+    release <- newEmptyMVar
+    let observer _ batch _ = case batch of
+          [DivergenceSet 0.61] -> putMVar entered () >> readMVar release
+          _ -> pure ()
+    withObservedEngine quiet observer $ \_ _ manager -> do
+      sid <- createManagedSession manager En
+      writer <- connected manager sid
+      _ <- events writer
+      submit writer (ClientMsg 1 (SetDivergence 0.61))
+      bounded (takeMVar entered)
+      captured <- newEmptyMVar
+      let acquiring = subscribeSessionWithJoinObserver manager sid $ \subscription -> do
+            putMVar captured subscription
+            atomically retry
+      pending <- async acquiring
+      (do
+        orphan <- bounded (takeMVar captured)
+        bounded (cancel pending)
+        bounded (waitCatch pending) >>= \case
+          Left _ -> pure ()
+          Right _ -> expectationFailure "Join acquisition was not cancelled"
+        putMVar release ()
+        _ <- events writer
+        submit writer (ClientMsg 2 (SetDivergence 0.4))
+        _ <- events writer
+        -- The second command is behind Join/Leave in the mailbox. It proves
+        -- the cancelled Join was handled without snapshot or live output.
+        noMessage orphan)
+        `finally` (void (tryPutMVar release ()) >> cancel pending)
+
+  it "cleans a cancelled first subscription after its actor and snapshot are installed" $
+    withEngine quiet $ \_ store creator -> do
+      sid <- createManagedSession creator En
+      stopManager creator
+      bracket (newManager store quiet) stopManager $ \manager -> do
+        captured <- newEmptyMVar
+        pending <- async $ subscribeSessionWithJoinObserver manager sid $ \subscription -> do
+          _ <- events subscription
+          putMVar captured subscription
+          atomically retry
+        (do
+          orphan <- bounded (takeMVar captured)
+          bounded (cancel pending)
+          -- Cancellation happened after lazy actor startup and Join delivery.
+          -- The published registry still owns that actor and remains usable.
+          survivor <- connected manager sid
+          _ <- events survivor
+          submit survivor (ClientMsg 1 (SetDivergence 0.4))
+          _ <- events survivor
+          noMessage orphan)
+          `finally` cancel pending
+
+  it "keeps shutdown owned when the first waiting caller is cancelled" $
+    withGates True $ \_ _ manager calls -> do
+      sid <- createManagedSession manager En
+      sub <- connected manager sid
+      _ <- events sub
+      submit sub (ClientMsg 1 (StartWithWord "root"))
+      _ <- events sub
+      gate <- nextGate calls
+      stopping <- async (stopManager manager)
+      bounded (readMVar (gateCancelled gate))
+      bounded (cancel stopping)
+      -- The shared shutdown job continues waiting for this resistant worker.
+      putMVar (gateWords gate) []
+      bounded (stopManager manager)
+      subscribeSession manager sid >>= \case
+        Left _ -> pure ()
+        Right _ -> expectationFailure "Cancelled stop caller reopened the registry"
 
   it "discards a cancellation-resistant result after changing focus" $
     withGates True $ \_ _ manager calls -> do
@@ -314,7 +392,12 @@ nextGate :: TQueue Gate -> IO Gate
 nextGate = bounded . atomically . readTQueue
 
 withGates :: Bool -> (FilePath -> Store -> Manager -> TQueue Gate -> IO ()) -> IO ()
-withGates stubborn action = withDatabase $ \path -> bracket (openStore path) closeStore $ \store -> do
+withGates stubborn = withGatesObserved stubborn (\_ _ _ -> pure ())
+
+withGatesObserved
+  :: Bool -> (SessionId -> [Event] -> Either StoreException () -> IO ())
+  -> (FilePath -> Store -> Manager -> TQueue Gate -> IO ()) -> IO ()
+withGatesObserved stubborn observer action = withDatabase $ \path -> bracket (openStore path) closeStore $ \store -> do
   calls <- newTQueueIO
   gates <- newTVarIO []
   let generator _ _ = do
@@ -324,12 +407,27 @@ withGates stubborn action = withDatabase $ \path -> bracket (openStore path) clo
           void (tryPutMVar (gateCancelled gate) ())
           if stubborn then readMVar (gateWords gate) else throwIO err
       release = readTVarIO gates >>= mapM_ (\gate -> void (tryPutMVar (gateWords gate) []))
-  manager <- newManager store generator
+  manager <- newManagerWithAppendObserver store generator observer
   action path store manager calls `finally` (release >> bounded (stopManager manager))
 
 withEngine :: BranchGenerator -> (FilePath -> Store -> Manager -> IO ()) -> IO ()
-withEngine generator action = withDatabase $ \path -> bracket (openStore path) closeStore $ \store ->
-  bracket (newManager store generator) stopManager (action path store)
+withEngine generator = withObservedEngine generator (\_ _ _ -> pure ())
+
+withObservedEngine
+  :: BranchGenerator -> (SessionId -> [Event] -> Either StoreException () -> IO ())
+  -> (FilePath -> Store -> Manager -> IO ()) -> IO ()
+withObservedEngine generator observer action = withDatabase $ \path -> bracket (openStore path) closeStore $ \store ->
+  bracket (newManagerWithAppendObserver store generator observer) stopManager (action path store)
+
+nextGeneratedAttempt
+  :: TQueue ([Event], Either StoreException ()) -> IO ([Event], Either StoreException ())
+nextGeneratedAttempt attempts = bounded (atomically awaitGenerated)
+  where
+    awaitGenerated = do
+      attempt@(batch, _) <- readTQueue attempts
+      if any isSeal batch then pure attempt else awaitGenerated
+    isSeal (BranchesOffered _ _) = True
+    isSeal _ = False
 
 withRaw :: FilePath -> (SQL.Connection -> IO a) -> IO a
 withRaw path = bracket (SQL.open path) SQL.close

@@ -5,13 +5,14 @@
 module Drift.Server.SessionActor
   ( BranchGenerator, Manager, Subscription
   , newManager, createManagedSession, subscribeSession
+  , newManagerWithAppendObserver, subscribeSessionWithJoinObserver
   , submit, receive, unsubscribe, stopManager
   ) where
 
-import Control.Concurrent.Async (Async, async, cancel, mapConcurrently_, poll, wait, waitCatch)
-import Control.Concurrent.MVar (MVar, modifyMVar, newMVar)
+import Control.Concurrent.Async (Async, async, asyncWithUnmask, cancel, mapConcurrently_, poll, wait, waitCatch)
+import Control.Concurrent.MVar (MVar, modifyMVarMasked, newMVar)
 import Control.Concurrent.STM
-import Control.Exception (SomeException, catch, evaluate, finally, throwIO, try)
+import Control.Exception (SomeException, catch, evaluate, finally, mask, onException, throwIO, try)
 import Control.Monad (filterM, forM_, void, when)
 import Data.Int (Int64)
 import Data.List (foldl')
@@ -31,6 +32,7 @@ data Manager = Manager
   { managerStore :: Store
   , managerGenerator :: BranchGenerator
   , managerRegistry :: MVar Registry
+  , managerAppendObserver :: SessionId -> [Event] -> Either StoreException () -> IO ()
   }
 
 data Registry = Running (Map.Map SessionId Actor) | Stopped (Async ())
@@ -68,13 +70,22 @@ data ActorState = ActorState
   }
 
 newManager :: Store -> BranchGenerator -> IO Manager
-newManager store generator = Manager store generator <$> newMVar (Running Map.empty)
+newManager store generator = newManagerWithAppendObserver store generator (\_ _ _ -> pure ())
+
+-- | Test seam, never sent over the wire. The observer runs after each append
+-- attempt and must return normally; production wiring uses newManager.
+newManagerWithAppendObserver
+  :: Store -> BranchGenerator
+  -> (SessionId -> [Event] -> Either StoreException () -> IO ()) -> IO Manager
+newManagerWithAppendObserver store generator observer = do
+  registry <- newMVar (Running Map.empty)
+  pure (Manager store generator registry observer)
 
 -- | A collision is retried against the durable uniqueness constraint. No
 -- process-local counter or clock value is trusted to prove global uniqueness.
 -- Storage failures propagate; stopped creation throws an IOException.
 createManagedSession :: Manager -> Lang -> IO SessionId
-createManagedSession manager language = modifyMVar manager.managerRegistry $ \case
+createManagedSession manager language = modifyMVarMasked manager.managerRegistry $ \case
   Stopped _ -> throwIO (userError "The session manager is stopped.")
   Running actors -> do
     (sid, history) <- createFresh
@@ -95,8 +106,15 @@ createManagedSession manager language = modifyMVar manager.managerRegistry $ \ca
 -- | Snapshot and registration are one actor message. The registry lock also
 -- serializes the first load, so concurrent connections cannot spawn two writers.
 subscribeSession :: Manager -> SessionId -> IO (Either Rejection Subscription)
-subscribeSession manager sid = do
-  found <- modifyMVar manager.managerRegistry $ \case
+subscribeSession manager sid = subscribeSessionWithJoinObserver manager sid (const (pure ()))
+
+-- | Test seam for cancelling an acquisition after enqueue but before reply.
+-- Exceptions from the observer have the same cleanup as a cancelled wait.
+subscribeSessionWithJoinObserver
+  :: Manager -> SessionId -> (Subscription -> IO ())
+  -> IO (Either Rejection Subscription)
+subscribeSessionWithJoinObserver manager sid observer = mask $ \restore -> do
+  found <- modifyMVarMasked manager.managerRegistry $ \case
     stopped@(Stopped _) -> pure (stopped, Left stoppedReason)
     Running actors -> case Map.lookup sid actors of
       Just actor -> pure (Running actors, Right actor)
@@ -120,11 +138,15 @@ subscribeSession manager sid = do
         alive <- readTVar actor.actorAlive
         when alive (writeTQueue actor.actorInbox (Join subscription reply))
         pure alive
-      if not accepted then pure (Left stoppedReason) else atomically $
-        (takeTMVar reply >> pure (Right subscription)) `orElse` do
-          alive <- readTVar actor.actorAlive
-          check (not alive)
-          pure (Left stoppedReason)
+      if not accepted then pure (Left stoppedReason) else
+        restore (do
+          observer subscription
+          atomically $
+            (takeTMVar reply >> pure (Right subscription)) `orElse` do
+              alive <- readTVar actor.actorAlive
+              check (not alive)
+              pure (Left stoppedReason))
+        `onException` unsubscribe subscription
 
 -- | Submissions after unsubscribe or manager stop are harmlessly ignored.
 submit :: Subscription -> ClientMsg -> IO ()
@@ -150,10 +172,12 @@ unsubscribe subscription = atomically $ do
 -- The caller owns the Store and closes it after this function returns.
 stopManager :: Manager -> IO ()
 stopManager manager = do
-  job <- modifyMVar manager.managerRegistry $ \case
+  -- No interruptible operation lies between starting a child and publishing
+  -- its owner. Pending caller cancellation is delivered after registry release.
+  job <- modifyMVarMasked manager.managerRegistry $ \case
     stopped@(Stopped job) -> pure (stopped, job)
     Running actors -> do
-      job <- async $ do
+      job <- asyncWithUnmask $ \unmask -> unmask $ do
         atomically $ forM_ (Map.elems actors) $ \actor -> do
           writeTVar actor.actorAlive False
           writeTQueue actor.actorInbox Halt
@@ -169,7 +193,9 @@ startActor manager sid history = do
       session = replay logValue
       initial = ActorState session logValue (length history) Map.empty 0
         session.sessionNextCandidateId Nothing []
-  thread <- async (loop inbox initial `finally` atomically (writeTVar alive False))
+  -- Registry mutation stays masked; the actor itself runs unmasked.
+  thread <- asyncWithUnmask $ \unmask ->
+    unmask (loop inbox initial `finally` atomically (writeTVar alive False))
   pure (Actor inbox alive thread)
   where
     loop inbox state = do
@@ -181,10 +207,14 @@ startActor manager sid history = do
         Halt -> mapConcurrently_ cancel workers
         Join subscription reply -> do
           let Log newest = current.stateLog
-          atomically $ do
-            writeTQueue subscription.subscriptionOutput (Events (reverse newest))
+          active <- atomically $ do
+            active <- readTVar subscription.subscriptionActive
+            when active (writeTQueue subscription.subscriptionOutput (Events (reverse newest)))
             putTMVar reply ()
-          loop inbox current {stateSubscribers = Map.insert subscription.subscriptionId subscription current.stateSubscribers}
+            pure active
+          loop inbox (if active then current
+            {stateSubscribers = Map.insert subscription.subscriptionId subscription current.stateSubscribers}
+            else current)
         Leave identity -> loop inbox current {stateSubscribers = Map.delete identity current.stateSubscribers}
         Request subscription message -> do
           active <- readTVarIO subscription.subscriptionActive
@@ -220,6 +250,7 @@ startActor manager sid history = do
       now <- unixMillis
       let stamped = zipWith (\number event -> Stamped number now event) [state.stateTail + 1 ..] events
       persisted <- try (appendEvents manager.managerStore sid state.stateTail stamped)
+      manager.managerAppendObserver sid events persisted
       case persisted of
         Left (_ :: StoreException) -> pure Nothing
         Right () -> do
