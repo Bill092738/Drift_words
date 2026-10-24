@@ -2,7 +2,6 @@
 
 module Drift.Domain.State (emptySession, apply, applyStamped, replay) where
 
-import Data.List (foldl')
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Drift.Domain.Entries (applyEntryEvent, emptyEntries)

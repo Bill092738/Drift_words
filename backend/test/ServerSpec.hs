@@ -54,7 +54,7 @@ spec = describe "HTTP and WebSocket server" $ do
     statusCode (responseStatus missing) `shouldSatisfy` (>= 400)
 
   it "rejects unknown sessions during the WebSocket handshake" $ withBackend $ \port _ -> do
-    result <- try (runClient "127.0.0.1" (fromIntegral port) "/api/sessions/missing/ws" (const (pure ())))
+    result <- try (runClient "127.0.0.1" port "/api/sessions/missing/ws" (const (pure ())))
       :: IO (Either SomeException ())
     result `shouldSatisfy` either (const True) (const False)
 
@@ -71,7 +71,7 @@ spec = describe "HTTP and WebSocket server" $ do
         let committed = concatMap eventsOf generated
             sequences = [number | Stamped number _ _ <- committed]
         length committed `shouldSatisfy` (>= 4)
-        sequences `shouldBe` [2 .. fromIntegral (length committed + 1)]
+        sequences `shouldBe` [2 .. length committed + 1]
         committed `shouldSatisfy` any isNodeChosen
         committed `shouldSatisfy` any isCandidateStream
         committed `shouldSatisfy` any isBranchesSeal
@@ -136,7 +136,7 @@ createSession port language = do
     Right value -> pure value
 
 withSession :: Int -> Text -> (Connection -> IO a) -> IO a
-withSession port identifier = runClient "127.0.0.1" (fromIntegral port)
+withSession port identifier = runClient "127.0.0.1" port
   ("/api/sessions/" <> Text.unpack identifier <> "/ws")
 
 receiveServerMessage :: Connection -> IO ServerMsg
@@ -163,6 +163,7 @@ collectThroughSeal connection = go []
 eventsOf :: ServerMsg -> [Stamped]
 eventsOf (Events values) = values
 eventsOf Rejected {} = []
+eventsOf Diagnostic {} = []
 
 isNodeChosen, isCandidateStream, isBranchesSeal :: Stamped -> Bool
 isNodeChosen (Stamped _ _ NodeChosen {}) = True

@@ -16,7 +16,7 @@ within action = do
 spec :: Spec
 spec = describe "prefetch cache" $ do
   it "starts at most one computation per key and consumes it once" $ do
-    cache <- newPrefetchCache
+    cache <- newPrefetchCache :: IO (PrefetchCache String Int)
     runs <- newIORef (0 :: Int)
     let work = atomicModifyIORef' runs (\n -> (n + 1, ())) >> pure (42 :: Int)
 
@@ -28,7 +28,7 @@ spec = describe "prefetch cache" $ do
     shutdownPrefetchCache cache
 
   it "lets only one concurrent waiter claim a prefetched value" $ do
-    cache <- newPrefetchCache
+    cache <- newPrefetchCache :: IO (PrefetchCache String Int)
     gate <- newEmptyMVar
     startPrefetch cache "word" (takeMVar gate >> pure (7 :: Int)) `shouldReturn` PrefetchStarted
     first <- newEmptyMVar
@@ -42,7 +42,7 @@ spec = describe "prefetch cache" $ do
     shutdownPrefetchCache cache
 
   it "keeps the selected prediction and cancels every unselected one" $ do
-    cache <- newPrefetchCache
+    cache <- newPrefetchCache :: IO (PrefetchCache String Int)
     selectedGate <- newEmptyMVar
     discardedStarted <- newEmptyMVar
     discardedStopped <- newEmptyMVar
@@ -60,7 +60,7 @@ spec = describe "prefetch cache" $ do
     shutdownPrefetchCache cache
 
   it "shuts down idempotently and refuses new prefetches" $ do
-    cache <- newPrefetchCache
+    cache <- newPrefetchCache :: IO (PrefetchCache String ())
     startPrefetch cache "word" (threadDelay 10000000 >> pure ()) `shouldReturn` PrefetchStarted
     within (shutdownPrefetchCache cache)
     shutdownPrefetchCache cache

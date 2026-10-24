@@ -5,7 +5,6 @@ module Drift.Domain.Decide (decide, offerBranches) where
 
 import Control.Monad (unless, when)
 import Data.Char (isSpace)
-import Data.List (foldl')
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Text (Text)

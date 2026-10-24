@@ -16,7 +16,6 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (SomeAsyncException, SomeException, catch, displayException, evaluate, finally, fromException, mask, onException, throwIO, try)
 import Control.Monad (filterM, forM_, void, when)
 import Data.Int (Int64)
-import Data.List (foldl')
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as Text

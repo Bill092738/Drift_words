@@ -7,6 +7,7 @@ import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Exception (bracket, catch, finally, throwIO)
 import Control.Monad (forM_, void)
+import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.List (nub)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -91,7 +92,7 @@ spec = describe "Session actor" $ do
         (a, b) <- concurrently (connected manager sid) (connected manager sid)
         initial <- events a
         events b `shouldReturn` initial
-        concurrently (submit a (ClientMsg 1 (SetDivergence 0.2)))
+        _ <- concurrently (submit a (ClientMsg 1 (SetDivergence 0.2)))
           (submit b (ClientMsg 2 (SetDivergence 0.3)))
         aa <- events a
         ab <- events a
@@ -161,7 +162,8 @@ spec = describe "Session actor" $ do
         Left (StorageFailure _) -> pure ()
         other -> expectationFailure (show other)
       loadEvents store sid `shouldReturn` Just (initial <> chosen)
-      noMessage sub
+      receive sub `shouldReturn` Diagnostic LevelError
+        "Saving the generated branches failed; revisit this word to generate them again."
       submit sub (ClientMsg 2 (SetDivergence 0.4))
       changed <- events sub
       map (\e -> e.seq) changed `shouldBe` [3]
@@ -190,11 +192,11 @@ spec = describe "Session actor" $ do
       let acquiring = subscribeSessionWithJoinObserver manager sid $ \subscription -> do
             putMVar captured subscription
             atomically retry
-      pending <- async acquiring
+      pendingJoin <- async acquiring
       (do
         orphan <- bounded (takeMVar captured)
-        bounded (cancel pending)
-        bounded (waitCatch pending) >>= \case
+        bounded (cancel pendingJoin)
+        bounded (waitCatch pendingJoin) >>= \case
           Left _ -> pure ()
           Right _ -> expectationFailure "Join acquisition was not cancelled"
         putMVar release ()
@@ -204,7 +206,7 @@ spec = describe "Session actor" $ do
         -- The second command is behind Join/Leave in the mailbox. It proves
         -- the cancelled Join was handled without snapshot or live output.
         noMessage orphan)
-        `finally` (void (tryPutMVar release ()) >> cancel pending)
+        `finally` (void (tryPutMVar release ()) >> cancel pendingJoin)
 
   it "cleans a cancelled first subscription after its actor and snapshot are installed" $
     withEngine quiet $ \_ store creator -> do
@@ -212,13 +214,13 @@ spec = describe "Session actor" $ do
       stopManager creator
       bracket (newManager store quiet) stopManager $ \manager -> do
         captured <- newEmptyMVar
-        pending <- async $ subscribeSessionWithJoinObserver manager sid $ \subscription -> do
+        pendingJoin <- async $ subscribeSessionWithJoinObserver manager sid $ \subscription -> do
           _ <- events subscription
           putMVar captured subscription
           atomically retry
         (do
           orphan <- bounded (takeMVar captured)
-          bounded (cancel pending)
+          bounded (cancel pendingJoin)
           -- Cancellation happened after lazy actor startup and Join delivery.
           -- The published registry still owns that actor and remains usable.
           survivor <- connected manager sid
@@ -226,7 +228,7 @@ spec = describe "Session actor" $ do
           submit survivor (ClientMsg 1 (SetDivergence 0.4))
           _ <- events survivor
           noMessage orphan)
-          `finally` cancel pending
+          `finally` cancel pendingJoin
 
   it "keeps shutdown owned when the first waiting caller is cancelled" $
     withGates True $ \_ _ manager calls -> do
@@ -317,18 +319,45 @@ spec = describe "Session actor" $ do
       unsubscribe sub
       noMessage sub
 
-  it "remains usable after a generator exception" $
-    withEngine (\_ _ -> throwIO (userError "private generator error")) $ \_ _ manager -> do
+  it "retries generation twice, reports each retry, and publishes the recovered result" $ do
+    attempts <- newIORef (0 :: Int)
+    let generator _ _ = do
+          attempt <- atomicModifyIORef' attempts (\n -> let next = n + 1 in (next, next))
+          if attempt < 3 then throwIO (userError "temporary generator error") else pure ["recovered"]
+    withEngine generator $ \_ _ manager -> do
       sid <- createManagedSession manager En
       sub <- connected manager sid
       _ <- events sub
       submit sub (ClientMsg 1 (StartWithWord "root"))
       _ <- events sub
-      forM_ (zip [2 ..]
-        [InsertWord "child", Backtrack (NodeId 1), PlaceNode (NodeId 1) (Vec2 2 3) 0, WrapUp]) $ \(request, command) -> do
-        submit sub (ClientMsg request command)
-        batch <- events sub
-        length batch `shouldBe` 1
+      receive sub `shouldReturn` Diagnostic LevelWarning
+        "Branch generation failed (attempt 1 of 3), retrying: user error (temporary generator error)"
+      receive sub `shouldReturn` Diagnostic LevelWarning
+        "Branch generation failed (attempt 2 of 3), retrying: user error (temporary generator error)"
+      streamedWords <$> events sub `shouldReturn` ["recovered"]
+      readIORef attempts `shouldReturn` 3
+      noMessage sub
+
+  it "reports a final diagnostic after three failures and remains usable" $ do
+    attempts <- newIORef (0 :: Int)
+    let generator _ _ = do
+          atomicModifyIORef' attempts (\n -> (n + 1, ()))
+          throwIO (userError "private generator error")
+    withEngine generator $ \_ _ manager -> do
+      sid <- createManagedSession manager En
+      sub <- connected manager sid
+      _ <- events sub
+      submit sub (ClientMsg 1 (StartWithWord "root"))
+      _ <- events sub
+      receive sub `shouldReturn` Diagnostic LevelWarning
+        "Branch generation failed (attempt 1 of 3), retrying: user error (private generator error)"
+      receive sub `shouldReturn` Diagnostic LevelWarning
+        "Branch generation failed (attempt 2 of 3), retrying: user error (private generator error)"
+      receive sub `shouldReturn` Diagnostic LevelError
+        "Branch generation failed after 3 attempts: user error (private generator error)"
+      readIORef attempts `shouldReturn` 3
+      submit sub (ClientMsg 2 (SetDivergence 0.4))
+      map (\stamped -> stamped.event) <$> events sub `shouldReturn` [DivergenceSet 0.4]
       noMessage sub
 
   forM_ [En, Zh] $ \language ->
@@ -337,8 +366,10 @@ spec = describe "Session actor" $ do
         sid <- createManagedSession manager language
         sub <- connected manager sid
         initial <- events sub
-        let CloudSpawned _ cloud = (head initial).event
-        walk sub 15 (head cloud)
+        firstCandidate <- case initial of
+          Stamped _ _ (CloudSpawned _ (candidate : _)) : _ -> pure candidate
+          _ -> expectationFailure "Expected a non-empty initial cloud" >> fail "Missing initial cloud"
+        walk sub 15 firstCandidate
         Just history <- loadEvents store sid
         let state = replay (Log (reverse history))
             visible = [c.candidateId | stamped <- history, c <- case stamped.event of

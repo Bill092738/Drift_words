@@ -4,7 +4,7 @@ import { Controls } from './chrome/controls/Controls.tsx';
 import { Sidebar } from './chrome/sidebar/Sidebar.tsx';
 import { Desk } from './desk/Desk.tsx';
 import type { DeskScene } from './desk/DeskScene.ts';
-import { createSessionStore, type SessionStore } from './store/store.ts';
+import { createSessionStore, type SessionStore, useSession } from './store/store.ts';
 import { fixtures } from './transport/fixtures.ts';
 import { answerDeterministic, MockTransport } from './transport/mock.ts';
 import { MockServer } from './transport/mockServer.ts';
@@ -12,6 +12,20 @@ import type { Transport } from './transport/transport.ts';
 
 const INTERACTIVE = 'interactive';
 const SPEEDS = [1, 4, 20] as const;
+
+function Diagnostics({ store }: { store: StoreApi<SessionStore> }) {
+  const diagnostics = useSession(store, (s) => s.diagnostics);
+  if (diagnostics.length === 0) return <p className="dev-diagnostics-empty">No diagnostics.</p>;
+  return (
+    <ol className="dev-diagnostics-list">
+      {diagnostics.map((diagnostic, index) => (
+        <li key={index} data-level={diagnostic.level}>
+          <strong>{diagnostic.level}</strong> {diagnostic.message}
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 /**
  * The app without a backend. "interactive" runs an in-browser mock session
@@ -23,6 +37,7 @@ export function App() {
   const [mode, setMode] = useState(INTERACTIVE);
   const [speed, setSpeed] = useState<number>(1);
   const [run, setRun] = useState(0);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [store, setStore] = useState<StoreApi<SessionStore> | null>(null);
   const desk = useRef<DeskScene | null>(null);
 
@@ -69,8 +84,23 @@ export function App() {
           </select>
         )}
         <button onClick={() => setRun((r) => r + 1)}>Restart</button>
+        <button
+          type="button"
+          aria-expanded={showDiagnostics}
+          aria-controls="dev-diagnostics"
+          aria-label="Toggle diagnostics"
+          onClick={() => setShowDiagnostics((shown) => !shown)}
+        >
+          &lt;&gt;
+        </button>
         <a href="?view=log">Event log</a>
       </div>
+      {store && showDiagnostics && (
+        <aside id="dev-diagnostics" className="dev-diagnostics" aria-label="Diagnostics">
+          <header>Diagnostics</header>
+          <Diagnostics store={store} />
+        </aside>
+      )}
     </>
   );
 }

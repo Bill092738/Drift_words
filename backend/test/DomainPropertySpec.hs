@@ -3,7 +3,7 @@
 module DomainPropertySpec (spec) where
 
 import Control.Monad (unless)
-import Data.List (foldl', mapAccumL)
+import Data.List (mapAccumL)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -21,7 +21,7 @@ import Test.QuickCheck hiding (replay)
 data Step = Step Session [Event] Session deriving Show
 
 wordsToTry :: [Text]
-wordsToTry = ["root", "ＲＯＯＴ", "river", "RIVER", "Ａ", "a", "Straße", "STRASSE", "森林", "中文", "ocean", "two words", ""]
+wordsToTry = ["root", "ＲＯＯＴ", "river", "RIVER", "Ａ", "a", "Straße", "STRASSE", "\x68EE\x6797", "\x4E2D\x6587", "ocean", "two words", ""]
 
 history :: [Int] -> [Step]
 history choices = initial <> snd (mapAccumL advance started choices)
@@ -29,7 +29,7 @@ history choices = initial <> snd (mapAccumL advance started choices)
     initialEvents = required (decide emptySession (StartWithWord "root"))
     rooted = foldl' apply emptySession initialEvents
     offered = required (offerBranches rooted (NodeId 1)
-      [Candidate (CandidateId 1) "river", Candidate (CandidateId 2) "森林"])
+      [Candidate (CandidateId 1) "river", Candidate (CandidateId 2) "\x68EE\x6797"])
     offeredState = foldl' apply rooted offered
     chosen = required (decide offeredState (Pick (CandidateId 1)))
     childState = foldl' apply offeredState chosen
@@ -40,6 +40,7 @@ history choices = initial <> snd (mapAccumL advance started choices)
     required = either (error . ("Required property prefix rejected: " <>) . show) id
     advance s input =
       let n = toInteger input -- Avoid abs minBound overflow during shrinking.
+          slot :: Int -> Int
           slot limit = fromInteger (abs n `mod` toInteger limit)
           w = wordsToTry !! slot (length wordsToTry)
           focused = maybe (NodeId 999) id s.sessionFocus
@@ -62,8 +63,8 @@ history choices = initial <> snd (mapAccumL advance started choices)
             6 -> decide s (PlaceNode oldNode (Vec2 2 3) 0)
             _ -> offerBranches s focused batch
           events = either (const []) id result
-          after = foldl' apply s events
-       in (after, Step s events after)
+          nextState = foldl' apply s events
+       in (nextState, Step s events nextState)
 
 histories :: ([Step] -> Property) -> Property
 histories assertion = forAllShrink (resize 80 (listOf arbitrary)) (shrinkList shrink) $ \choices ->
@@ -82,24 +83,24 @@ checkProperty p = do
 spec :: Spec
 spec = describe "domain invariants over generated decisions (100 cases each)" $ do
   it "never newly admits a visited word" $ checkProperty $ histories $ \steps ->
-    conjoin [counterexample (show step) (property (Set.notMember (wordKey c.word) before.sessionVisited))
-            | step@(Step before events _) <- steps, CandidateStreamed _ c <- events]
+    conjoin [counterexample (show step) (property (Set.notMember (wordKey c.word) prior.sessionVisited))
+            | step@(Step prior events _) <- steps, CandidateStreamed _ c <- events]
   it "never increases an admitted word's appearance count above the admission-time cap" $
     checkProperty $ histories $ \steps ->
       conjoin [counterexample (show step) $
-                 Map.findWithDefault 0 (wordKey c.word) after.sessionAppearances ===
-                   Map.findWithDefault 0 (wordKey c.word) before.sessionAppearances + 1
-                 .&&. property (Map.findWithDefault 0 (wordKey c.word) after.sessionAppearances <= cap before.sessionDivergence)
-               | step@(Step before events after) <- steps, CandidateStreamed _ c <- events]
+                 Map.findWithDefault 0 (wordKey c.word) nextState.sessionAppearances ===
+                   Map.findWithDefault 0 (wordKey c.word) prior.sessionAppearances + 1
+                 .&&. property (Map.findWithDefault 0 (wordKey c.word) nextState.sessionAppearances <= cap prior.sessionDivergence)
+               | step@(Step prior events nextState) <- steps, CandidateStreamed _ c <- events]
   it "gives every nonroot node an existing, earlier-selected parent" $
     checkProperty $ histories $ \steps ->
-      conjoin [counterexample (show step) (validTree after) | step@(Step _ _ after) <- steps]
+      conjoin [counterexample (show step) (validTree nextState) | step@(Step _ _ nextState) <- steps]
   it "replays every generated prefix to its incremental apply state" $
     checkProperty $ histories $ \steps ->
-      let prefixes = tail (scanl (\previous (Step _ events _) -> previous <> events) [] steps)
+      let prefixes = drop 1 (scanl (\previous (Step _ events _) -> previous <> events) [] steps)
        in conjoin [counterexample (show step) $
-                    replay (Log (reverse (zipWith (\i e -> Stamped i (fromIntegral i) e) [1..] events))) === after
-                  | (step@(Step _ _ after), events) <- zip steps prefixes]
+                    replay (Log (reverse (zipWith (\i e -> Stamped i (fromIntegral i) e) [1..] events))) === nextState
+                  | (step@(Step _ _ nextState), events) <- zip steps prefixes]
 
 validTree :: Session -> Property
 validTree s =
