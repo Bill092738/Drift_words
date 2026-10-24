@@ -12,8 +12,10 @@ module Drift.Model.Config
   , resolveOptionalProvider
   , toOpenAISettings
   , createModelProvider
+  , geminiBaseUrl
   ) where
 
+import Control.Monad (when)
 import Data.Aeson (FromJSON (..), Value (..), (.:), (.:?), (.!=), withObject)
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
@@ -21,14 +23,15 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Yaml as Yaml
 import Drift.Model.Mock (mockProvider)
-import Drift.Model.OpenAICompat (OpenAISettings (..), openAICompatibleProvider, openAIResponsesProvider)
+import Drift.Model.OpenAICompat (OpenAISettings (..), RequestOptions (..), defaultRequestOptions, openAICompatibleProvider, openAIResponsesProvider)
 import Drift.Model.Provider (ModelProvider)
 import System.Environment (lookupEnv)
 
 data ProviderKind = OpenAICompatible | OpenAIResponses | Mock
   deriving (Eq, Show)
 
-data ProviderRole = BranchesRole | EmbeddingsRole | WritingRole | FinalRole
+-- | 'CloudRole' makes the starting word cloud; it is optional.
+data ProviderRole = BranchesRole | EmbeddingsRole | WritingRole | FinalRole | CloudRole
   deriving (Eq, Ord, Show, Enum, Bounded)
 
 data ProviderConfig = ProviderConfig
@@ -37,6 +40,8 @@ data ProviderConfig = ProviderConfig
   , providerModel :: Text
   , providerEmbeddingModel :: Maybe Text
   , providerApiKeyEnv :: Maybe Text
+  , providerOptions :: RequestOptions
+  -- ^ request shaping: reasoning effort, temperature, output limit, timeout
   }
   deriving (Eq, Show)
 
@@ -67,19 +72,48 @@ instance FromJSON ConfigFile where
         Just role -> pure (role, value)
       parseRole (key, _) = fail ("model role must be a string: " <> T.unpack (Key.toText key))
 
+-- | Optional keys, all with the defaults of 'defaultRequestOptions':
+--
+-- > reasoning_effort: low        # sent as reasoning_effort; default: not sent
+-- > send_temperature: false      # derive temperature from divergence; default true
+-- > limit_output_tokens: false   # send the token budget as max_tokens; default true
+-- > timeout_seconds: 60          # default 120
+-- > concurrent_requests: true    # run prefetches in parallel; default false
+--
+-- @kind: gemini@ is the Gemini API's OpenAI-compatible endpoint with the
+-- settings Gemini 3 models need: the base URL, the key in @GEMINI_API_KEY@,
+-- @reasoning_effort: low@ (Gemini 3 cannot stop thinking), no temperature
+-- (Google advises keeping the default), no output limit (it also counts
+-- thinking tokens, so a small one returns an empty answer), and parallel
+-- prefetches. Each can still be overridden.
 instance FromJSON ProviderConfig where
   parseJSON = withObject "provider" $ \obj -> do
     kindText <- obj .: "kind"
-    kind <- case (kindText :: Text) of
-      "mock" -> pure Mock
-      "openai-compatible" -> pure OpenAICompatible
-      "openai-responses" -> pure OpenAIResponses
+    (kind, preset) <- case (kindText :: Text) of
+      "mock" -> pure (Mock, Nothing)
+      "openai-compatible" -> pure (OpenAICompatible, Nothing)
+      "openai-responses" -> pure (OpenAIResponses, Nothing)
+      "gemini" -> pure (OpenAICompatible, Just geminiPreset)
       other -> fail ("unsupported provider kind: " <> T.unpack other)
-    baseUrl <- obj .:? "base_url" .!= ""
+    let base = maybe defaultRequestOptions snd preset
+    baseUrl <- obj .:? "base_url" .!= maybe "" (const geminiBaseUrl) preset
     model <- obj .:? "model" .!= "mock"
     embeddingModel <- obj .:? "embedding_model"
-    apiKeyEnv <- obj .:? "api_key_env"
-    pure (ProviderConfig kind baseUrl model embeddingModel apiKeyEnv)
+    apiKeyEnv <- maybe (obj .:? "api_key_env") (\(env, _) -> Just <$> obj .:? "api_key_env" .!= env) preset
+    effort <- obj .:? "reasoning_effort" .!= reasoningEffort base
+    temperature <- obj .:? "send_temperature" .!= sendTemperature base
+    limit <- obj .:? "limit_output_tokens" .!= limitOutputTokens base
+    timeout <- obj .:? "timeout_seconds" .!= timeoutSeconds base
+    concurrent <- obj .:? "concurrent_requests" .!= concurrentRequests base
+    when (timeout <= 0) (fail "timeout_seconds must be positive")
+    pure (ProviderConfig kind baseUrl model embeddingModel apiKeyEnv (RequestOptions effort temperature limit timeout concurrent))
+    where
+      geminiPreset = ("GEMINI_API_KEY", RequestOptions (Just "low") False False 60 True)
+
+-- | The Gemini API's OpenAI-compatible endpoint.
+geminiBaseUrl :: Text
+geminiBaseUrl = "https://generativelanguage.googleapis.com/v1beta/openai"
+
 
 loadModelConfig :: FilePath -> IO (Either Text ModelConfig)
 loadModelConfig path = do
@@ -117,6 +151,7 @@ toOpenAISettings config = do
     , openAIDefaultModel = providerModel config
     , openAIEmbeddingModel = providerEmbeddingModel config
     , openAIApiKey = key
+    , openAIOptions = providerOptions config
     }
 
 createModelProvider :: ProviderConfig -> IO ModelProvider
@@ -130,4 +165,5 @@ roleFromText "branches" = Just BranchesRole
 roleFromText "embeddings" = Just EmbeddingsRole
 roleFromText "writing" = Just WritingRole
 roleFromText "final" = Just FinalRole
+roleFromText "cloud" = Just CloudRole
 roleFromText _ = Nothing

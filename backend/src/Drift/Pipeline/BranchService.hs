@@ -30,6 +30,7 @@ module Drift.Pipeline.BranchService
   , BranchError (..)
   , RawBranches (..)
   , newBranchService
+  , withParallelPrefetch
   , closeBranchService
   , branchesFor
   , prefetchBranches
@@ -56,6 +57,8 @@ data BranchService k = BranchService
   -- ^ Nothing selects in the model's order (prompt-only).
   , serviceScheduler :: Scheduler
   , servicePrefetch :: PrefetchCache k RawBranches
+  , serviceParallelPrefetch :: Bool
+  -- ^ run prefetches side by side instead of one at a time at P1
   }
 
 data BranchError
@@ -78,7 +81,15 @@ data RawBranches = RawBranches
 
 newBranchService :: ModelProvider -> Text -> Maybe ([Text] -> IO [Embedding]) -> IO (BranchService k)
 newBranchService provider model embedder =
-  BranchService provider model embedder <$> newScheduler <*> newPrefetchCache
+  BranchService provider model embedder <$> newScheduler <*> newPrefetchCache <*> pure False
+
+-- | For an endpoint that serves requests in parallel (a hosted API):
+-- prefetches no longer queue behind the scheduler's single slot, so the rings
+-- of all offered words are ready after one model round trip instead of one
+-- per word. A pick that misses still runs at P0 on the scheduler. Cancelling
+-- a prefetch still stops its request.
+withParallelPrefetch :: BranchService k -> BranchService k
+withParallelPrefetch service = service {serviceParallelPrefetch = True}
 
 closeBranchService :: BranchService k -> IO ()
 closeBranchService service = do
@@ -115,10 +126,13 @@ branchesFor service key context onWord = do
 -- Cancelling the prefetch also withdraws its job from the scheduler.
 prefetchBranches :: Ord k => BranchService k -> k -> BranchContext -> IO ()
 prefetchBranches service key context = do
-  _ <- startPrefetch service.servicePrefetch key $ do
-    job <- submit service.serviceScheduler P1 (generateRaw service context (const (pure ())))
-    result <- await job `onException` cancel job
-    either (throwIO . userError . show) pure result
+  _ <- startPrefetch service.servicePrefetch key $
+    if service.serviceParallelPrefetch
+      then generateRaw service context (const (pure ()))
+      else do
+        job <- submit service.serviceScheduler P1 (generateRaw service context (const (pure ())))
+        result <- await job `onException` cancel job
+        either (throwIO . userError . show) pure result
   pure ()
 
 -- | Blocks until the prefetch for @key@ has finished (or was cancelled),

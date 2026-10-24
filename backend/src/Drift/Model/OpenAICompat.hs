@@ -2,11 +2,15 @@
 
 module Drift.Model.OpenAICompat
   ( OpenAISettings (..)
+  , RequestOptions (..)
+  , defaultRequestOptions
   , openAICompatibleProvider
   , openAIResponsesProvider
   , temperatureFor
   , chatCompletionPayload
+  , chatCompletionPayloadWith
   , responsesPayload
+  , responsesPayloadWith
   , httpErrorMessage
   , parseChatCompletion
   , parseResponsesEvent
@@ -37,8 +41,33 @@ data OpenAISettings = OpenAISettings
   , openAIDefaultModel :: Text
   , openAIEmbeddingModel :: Maybe Text
   , openAIApiKey :: Maybe Text
+  , openAIOptions :: RequestOptions
   }
   deriving (Eq, Show)
+
+-- | How requests are shaped for one endpoint. The defaults suit classic chat
+-- models; models that always think (Gemini 3, OpenAI reasoning models) need
+-- 'reasoningEffort' set and 'limitOutputTokens' off, because their output
+-- limit also counts thinking tokens and a small one leaves the answer empty.
+data RequestOptions = RequestOptions
+  { reasoningEffort :: Maybe Text
+  -- ^ sent as @reasoning_effort@ (chat) or @reasoning.effort@ (responses)
+  , sendTemperature :: Bool
+  -- ^ derive @temperature@ from divergence; off for models that should keep
+  -- their default sampling, which then follow divergence through the prompt
+  -- and the embedding band only
+  , limitOutputTokens :: Bool
+  -- ^ send the request's token budget as @max_tokens@ / @max_output_tokens@
+  , timeoutSeconds :: Int
+  -- ^ how long to wait for a response to start
+  , concurrentRequests :: Bool
+  -- ^ the endpoint serves requests in parallel (a hosted API), so speculative
+  -- work need not queue behind a single model slot (a local GPU)
+  }
+  deriving (Eq, Show)
+
+defaultRequestOptions :: RequestOptions
+defaultRequestOptions = RequestOptions Nothing True True 120 False
 
 openAICompatibleProvider :: OpenAISettings -> IO ModelProvider
 openAICompatibleProvider settings = do
@@ -62,12 +91,12 @@ openAIResponsesProvider settings = do
 generateStream :: Manager -> OpenAISettings -> GenRequest -> (Text -> IO ()) -> IO Text
 generateStream manager settings request onChunk = do
   initial <- parseRequest (T.unpack (trimSlash (openAIBaseUrl settings) <> "/chat/completions"))
-  let payload = chatCompletionPayload (openAIDefaultModel settings) request
+  let payload = chatCompletionPayloadWith (openAIOptions settings) (openAIDefaultModel settings) request
       requestWithBody = initial
         { method = "POST"
         , requestHeaders = ("Content-Type", "application/json") : requestHeaders initial
         , requestBody = RequestBodyLBS (encode payload)
-        , responseTimeout = responseTimeoutMicro 120000000
+        , responseTimeout = responseTimeoutMicro (timeoutSeconds (openAIOptions settings) * 1000000)
         }
       req = addAuth settings requestWithBody
   withResponse req manager $ \response -> do
@@ -85,12 +114,12 @@ generateStream manager settings request onChunk = do
 generateResponsesStream :: Manager -> OpenAISettings -> GenRequest -> (Text -> IO ()) -> IO Text
 generateResponsesStream manager settings request onChunk = do
   initial <- parseRequest (T.unpack (trimSlash (openAIBaseUrl settings) <> "/responses"))
-  let payload = responsesPayload (openAIDefaultModel settings) request
+  let payload = responsesPayloadWith (openAIOptions settings) (openAIDefaultModel settings) request
       requestWithBody = initial
         { method = "POST"
         , requestHeaders = ("Content-Type", "application/json") : requestHeaders initial
         , requestBody = RequestBodyLBS (encode payload)
-        , responseTimeout = responseTimeoutMicro 120000000
+        , responseTimeout = responseTimeoutMicro (timeoutSeconds (openAIOptions settings) * 1000000)
         }
       req = addAuth settings requestWithBody
   withResponse req manager $ \response -> do
@@ -110,30 +139,40 @@ generateResponsesStream manager settings request onChunk = do
 temperatureFor :: Double -> Double
 temperatureFor divergence = 0.5 + 0.6 * max 0 (min 1 divergence)
 
--- | Request body for @/chat/completions@; the request's model wins over the default.
+-- | Request body for @/chat/completions@ with the default options.
 chatCompletionPayload :: Text -> GenRequest -> Value
-chatCompletionPayload defaultModel request =
+chatCompletionPayload = chatCompletionPayloadWith defaultRequestOptions
+
+-- | Request body for @/chat/completions@; the request's model wins over the default.
+chatCompletionPayloadWith :: RequestOptions -> Text -> GenRequest -> Value
+chatCompletionPayloadWith options defaultModel request =
   object $
     [ "model" .= requestModel defaultModel request
     , "messages" .= [object ["role" .= ("user" :: Text), "content" .= genPrompt request]]
-    , "temperature" .= temperatureFor (genDivergence request)
     , "stream" .= True
     ]
-      <> ["max_tokens" .= genMaxTokens request | genMaxTokens request > 0]
+      <> ["temperature" .= temperatureFor (genDivergence request) | sendTemperature options]
+      <> ["max_tokens" .= genMaxTokens request | limitOutputTokens options, genMaxTokens request > 0]
+      <> ["reasoning_effort" .= effort | Just effort <- [reasoningEffort options]]
+
+-- | Request body for @/responses@ with the default options.
+responsesPayload :: Text -> GenRequest -> Value
+responsesPayload = responsesPayloadWith defaultRequestOptions
 
 -- | Request body for @/responses@; the request's model wins over the default.
-responsesPayload :: Text -> GenRequest -> Value
-responsesPayload defaultModel request =
+responsesPayloadWith :: RequestOptions -> Text -> GenRequest -> Value
+responsesPayloadWith options defaultModel request =
   object $
     [ "model" .= requestModel defaultModel request
     , "input" .= [object
         [ "role" .= ("user" :: Text)
         , "content" .= [object ["type" .= ("input_text" :: Text), "text" .= genPrompt request]]
         ]]
-    , "temperature" .= temperatureFor (genDivergence request)
     , "stream" .= True
     ]
-      <> ["max_output_tokens" .= genMaxTokens request | genMaxTokens request > 0]
+      <> ["temperature" .= temperatureFor (genDivergence request) | sendTemperature options]
+      <> ["max_output_tokens" .= genMaxTokens request | limitOutputTokens options, genMaxTokens request > 0]
+      <> ["reasoning" .= object ["effort" .= effort] | Just effort <- [reasoningEffort options]]
 
 requestModel :: Text -> GenRequest -> Text
 requestModel defaultModel request = if T.null (genModel request) then defaultModel else genModel request
@@ -147,6 +186,7 @@ embedTexts manager settings model inputs = do
         { method = "POST"
         , requestHeaders = ("Content-Type", "application/json") : requestHeaders initial
         , requestBody = RequestBodyLBS (encode payload)
+        , responseTimeout = responseTimeoutMicro (timeoutSeconds (openAIOptions settings) * 1000000)
         }
       req = addAuth settings requestWithBody
   response <- httpLbs req manager
