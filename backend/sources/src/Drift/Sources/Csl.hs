@@ -13,6 +13,7 @@ module Drift.Sources.Csl
   , cslObject
   ) where
 
+import Control.Applicative ((<|>))
 import Data.Aeson (Value (..), object, (.=))
 import Data.Aeson.Key (Key)
 import qualified Data.Aeson.KeyMap as KM
@@ -21,7 +22,7 @@ import Data.Scientific (floatingOrInteger)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
-import Drift.Search.Text (normalizeDoi)
+import Drift.Search.Text (doiUrl, normalizeDoi)
 
 -- | Builds a CSL object from the fields that are present.
 cslObject :: [(Key, Maybe Value)] -> Value
@@ -68,8 +69,10 @@ splitPersonName name = case T.words name of
 
 -- | Cleans the JSON that doi.org returns for @Accept: application/vnd.citationstyles.csl+json@.
 -- That response is Crossref's own format (type @journal-article@, an old
--- @dx.doi.org@ URL, indexing and license data), so it is cut down to the CSL
--- fields a reference needs. Nothing is invented: a missing field stays missing.
+-- @dx.doi.org@ URL, @publisher-location@ and @edition-number@ instead of the
+-- CSL names, indexing and license data), so it is cut down to the CSL fields a
+-- reference needs, including the editor, edition and place that book and
+-- chapter references use. Nothing is invented: a missing field stays missing.
 -- Returns Nothing when there is no title to cite.
 normalizeCrossrefCsl :: Value -> Maybe Value
 normalizeCrossrefCsl = \case
@@ -79,17 +82,29 @@ normalizeCrossrefCsl = \case
     pure . cslObject $
       [ ("type", Just (String (maybe "article" crossrefType (textField "type" o))))
       , ("title", Just (String title))
-      , ("author", authors o)
+      , ("author", people "author" o)
+      , ("editor", people "editor" o)
       , ("container-title", String <$> textField "container-title" o)
+      , ("edition", String <$> (textOrNumber "edition" o <|> textOrNumber "edition-number" o))
       , ("volume", String <$> textField "volume" o)
       , ("issue", String <$> textField "issue" o)
       , ("page", String <$> textField "page" o)
       , ("publisher", String <$> textField "publisher" o)
+      , ("publisher-place", String <$> (textField "publisher-place" o <|> textField "publisher-location" o))
       , ("DOI", String <$> doi)
-      , ("URL", String . ("https://doi.org/" <>) <$> doi)
+      , ("URL", String . doiUrl <$> doi)
       , ("issued", issued o)
       ]
   _ -> Nothing
+
+-- | Like 'textField', but a JSON number is also accepted. Crossref sends
+-- @edition-number@ as a string; other registries may not.
+textOrNumber :: Key -> KM.KeyMap Value -> Maybe Text
+textOrNumber k o = case KM.lookup k o of
+  Just (Number n) -> Just $ case floatingOrInteger n :: Either Double Int of
+    Right i -> T.pack (show i)
+    Left d -> T.pack (show d)
+  _ -> textField k o
 
 -- | A text field, whether the source gave a string or a list of strings
 -- (Crossref sometimes does, for titles and journal names).
@@ -101,8 +116,10 @@ textField k o = case KM.lookup k o of
     [] -> Nothing
   _ -> Nothing
 
-authors :: KM.KeyMap Value -> Maybe Value
-authors o = case KM.lookup "author" o of
+-- | A list of names (@author@ or @editor@) as CSL names: family and given, or
+-- a literal for an organisation. Affiliations, ORCIDs and roles are dropped.
+people :: Key -> KM.KeyMap Value -> Maybe Value
+people key o = case KM.lookup key o of
   Just (Array a) -> case mapMaybe person (V.toList a) of
     [] -> Nothing
     ps -> Just (Array (V.fromList ps))
