@@ -17,6 +17,7 @@ module Drift.Pipeline.Branches
   , divergenceBand
   , selectCandidates
   , buildBranchPrompt
+  , branchTokenBudget
   , divergenceDescription
   ) where
 
@@ -225,6 +226,12 @@ buildBranchPrompt context =
  where
   -- The current word first, then the chosen words, without repeats.
   excluded = nubOrdOn normalizeWord (context.currentWord : Set.toList context.chosenWords)
+
+-- | Output tokens to allow for a ring of @n@ branches: the prompt asks for 2n
+-- one-word lines, budgeted at 8 tokens each. Reasoning models that count
+-- hidden reasoning against this limit may need a larger budget.
+branchTokenBudget :: Int -> Int
+branchTokenBudget n = max 1 (n * 2) * 8
 
 -- | The divergence slider in words, which models follow better than a number.
 divergenceDescription :: Double -> Text

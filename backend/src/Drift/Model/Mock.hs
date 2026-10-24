@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Drift.Model.Mock (mockProvider, mockWords) where
+module Drift.Model.Mock (mockProvider, mockWords, mockTokensPerWord) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -13,12 +13,19 @@ mockProvider = ModelProvider
   , embed = Just (pure . map embedWord)
   }
 
+-- | 'genMaxTokens' is a token budget, as for real providers; the mock spends
+-- 'mockTokensPerWord' on each word line and always returns at least one word.
 mockGenerate :: GenRequest -> (Text -> IO ()) -> IO Text
 mockGenerate request onChunk = do
-  let output = T.intercalate "\n" (take (max 1 (genMaxTokens request)) (mockWords (genPrompt request) (genDivergence request)))
+  let budget = genMaxTokens request
+      count = if budget <= 0 then maxBound else max 1 (budget `div` mockTokensPerWord)
+      output = T.intercalate "\n" (take count (mockWords (genPrompt request) (genDivergence request)))
       chunks = T.chunksOf 8 output
   mapM_ onChunk chunks
   pure output
+
+mockTokensPerWord :: Int
+mockTokensPerWord = 8
 
 mockWords :: Text -> Double -> [Text]
 mockWords prompt divergence

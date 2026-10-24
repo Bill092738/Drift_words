@@ -3,12 +3,15 @@
 module ModelProviderSpec (spec) where
 
 import Control.Monad (forM_)
+import Data.Aeson (Value (..))
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KM
 import Data.IORef (newIORef, modifyIORef', readIORef)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Drift.Model.Config
 import Drift.Model.Mock
-import Drift.Model.OpenAICompat (parseChatCompletion, parseEmbeddingResponse, parseSseData)
+import Drift.Model.OpenAICompat (chatCompletionPayload, parseChatCompletion, parseEmbeddingResponse, parseSseData, responsesPayload, temperatureFor)
 import Drift.Model.Provider
 import Test.Hspec
 
@@ -40,6 +43,31 @@ spec = do
           second <- embedTexts ["ocean", "tide"]
           first `shouldBe` second
           length first `shouldBe` 2
+
+    it "treats max tokens as a token budget" $ do
+      let run budget = T.lines <$> generate mockProvider (GenRequest "ocean" "mock" 0.1 budget) (const (pure ()))
+      one <- run 8
+      some <- run (3 * mockTokensPerWord)
+      all' <- run 0
+      length one `shouldBe` 1
+      length some `shouldBe` 3
+      length all' `shouldBe` length (mockWords "ocean" 0.1)
+
+  describe "OpenAI-compatible request payloads" $ do
+    it "derives temperature from divergence" $ do
+      temperatureFor 0 `shouldBe` 0.5
+      temperatureFor 1 `shouldBe` 1.1
+      temperatureFor 2 `shouldBe` 1.1
+
+    it "sends the token budget as max_tokens or max_output_tokens" $ do
+      let request = GenRequest "prompt" "" 0.5 80
+          field name value = lookupKey name value
+      field "max_tokens" (chatCompletionPayload "default" request) `shouldBe` Just (Number 80)
+      field "max_output_tokens" (responsesPayload "default" request) `shouldBe` Just (Number 80)
+      field "temperature" (chatCompletionPayload "default" request) `shouldBe` Just (Number 0.8)
+      field "model" (responsesPayload "default" request) `shouldBe` Just (String "default")
+      field "model" (chatCompletionPayload "default" request {genModel = "chosen"}) `shouldBe` Just (String "chosen")
+      field "max_tokens" (chatCompletionPayload "default" request {genMaxTokens = 0}) `shouldBe` Nothing
 
   describe "provider role routing" $ do
     it "resolves a configured role to its provider" $ do
@@ -86,3 +114,7 @@ collectChunks provider request = do
   ref <- newIORef []
   _ <- generate provider request (\chunk -> modifyIORef' ref (<> [chunk]))
   readIORef ref
+
+lookupKey :: Text -> Value -> Maybe Value
+lookupKey name (Object fields) = KM.lookup (Key.fromText name) fields
+lookupKey _ _ = Nothing

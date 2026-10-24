@@ -4,6 +4,9 @@ module Drift.Model.OpenAICompat
   ( OpenAISettings (..)
   , openAICompatibleProvider
   , openAIResponsesProvider
+  , temperatureFor
+  , chatCompletionPayload
+  , responsesPayload
   , parseChatCompletion
   , parseResponsesEvent
   , parseEmbeddingResponse
@@ -57,13 +60,7 @@ openAIResponsesProvider settings = do
 generateStream :: Manager -> OpenAISettings -> GenRequest -> (Text -> IO ()) -> IO Text
 generateStream manager settings request onChunk = do
   initial <- parseRequest (T.unpack (trimSlash (openAIBaseUrl settings) <> "/chat/completions"))
-  let model = if T.null (genModel request) then openAIDefaultModel settings else genModel request
-      payload = object
-        [ "model" .= model
-        , "messages" .= [object ["role" .= ("user" :: Text), "content" .= genPrompt request]]
-        , "temperature" .= (0.7 :: Double)
-        , "stream" .= True
-        ]
+  let payload = chatCompletionPayload (openAIDefaultModel settings) request
       requestWithBody = initial
         { method = "POST"
         , requestHeaders = ("Content-Type", "application/json") : requestHeaders initial
@@ -86,16 +83,7 @@ generateStream manager settings request onChunk = do
 generateResponsesStream :: Manager -> OpenAISettings -> GenRequest -> (Text -> IO ()) -> IO Text
 generateResponsesStream manager settings request onChunk = do
   initial <- parseRequest (T.unpack (trimSlash (openAIBaseUrl settings) <> "/responses"))
-  let model = if T.null (genModel request) then openAIDefaultModel settings else genModel request
-      payload = object
-        [ "model" .= model
-        , "input" .= [object
-            [ "role" .= ("user" :: Text)
-            , "content" .= [object ["type" .= ("input_text" :: Text), "text" .= genPrompt request]]
-            ]]
-        , "temperature" .= (0.7 :: Double)
-        , "stream" .= True
-        ]
+  let payload = responsesPayload (openAIDefaultModel settings) request
       requestWithBody = initial
         { method = "POST"
         , requestHeaders = ("Content-Type", "application/json") : requestHeaders initial
@@ -114,6 +102,39 @@ generateResponsesStream manager settings request onChunk = do
           onChunk content
           modifyIORef' output (<> content)
     readIORef output
+
+-- | Sampling temperature for a divergence setting: 0.5 when focused, up to
+-- 1.1 when the user asks for surprising associations.
+temperatureFor :: Double -> Double
+temperatureFor divergence = 0.5 + 0.6 * max 0 (min 1 divergence)
+
+-- | Request body for @/chat/completions@; the request's model wins over the default.
+chatCompletionPayload :: Text -> GenRequest -> Value
+chatCompletionPayload defaultModel request =
+  object $
+    [ "model" .= requestModel defaultModel request
+    , "messages" .= [object ["role" .= ("user" :: Text), "content" .= genPrompt request]]
+    , "temperature" .= temperatureFor (genDivergence request)
+    , "stream" .= True
+    ]
+      <> ["max_tokens" .= genMaxTokens request | genMaxTokens request > 0]
+
+-- | Request body for @/responses@; the request's model wins over the default.
+responsesPayload :: Text -> GenRequest -> Value
+responsesPayload defaultModel request =
+  object $
+    [ "model" .= requestModel defaultModel request
+    , "input" .= [object
+        [ "role" .= ("user" :: Text)
+        , "content" .= [object ["type" .= ("input_text" :: Text), "text" .= genPrompt request]]
+        ]]
+    , "temperature" .= temperatureFor (genDivergence request)
+    , "stream" .= True
+    ]
+      <> ["max_output_tokens" .= genMaxTokens request | genMaxTokens request > 0]
+
+requestModel :: Text -> GenRequest -> Text
+requestModel defaultModel request = if T.null (genModel request) then defaultModel else genModel request
 
 embedTexts :: Manager -> OpenAISettings -> Text -> [Text] -> IO [Embedding]
 embedTexts _ _ _ [] = pure []

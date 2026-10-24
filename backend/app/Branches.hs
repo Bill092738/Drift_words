@@ -49,7 +49,7 @@ main = do
         , appearanceCounts = Map.empty
         , branchCount = 5
         }
-      request = GenRequest (buildBranchPrompt context) (providerModel branchConfig) (optionDivergence options) (context.branchCount * 2)
+      request = GenRequest (buildBranchPrompt context) (providerModel branchConfig) (optionDivergence options) (branchTokenBudget context.branchCount)
   streamState <- newIORef (emptyStreamParser, [])
   generatedResult <- bracket newScheduler shutdown $ \scheduler -> do
     job <- submit scheduler P0 $

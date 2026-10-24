@@ -15,6 +15,8 @@ data GenRequest = GenRequest
   , genModel :: Text
   , genDivergence :: Double
   , genMaxTokens :: Int
+  -- ^ Output token budget, sent to the API as max_tokens / max_output_tokens.
+  -- 0 or less means no limit.
   }
   deriving (Eq, Show)
 
