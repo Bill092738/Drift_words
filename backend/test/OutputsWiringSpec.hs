@@ -92,8 +92,8 @@ withDatabase action = bracket acquire removeFile action
       removeFile path
       pure path
 
-withOutputs :: OutputsGenerator -> (Store -> Manager -> IO ()) -> IO ()
-withOutputs generator action = withDatabase $ \path -> bracket (openStore path) closeStore $ \store ->
+withOutputsManager :: OutputsGenerator -> (Store -> Manager -> IO ()) -> IO ()
+withOutputsManager generator action = withDatabase $ \path -> bracket (openStore path) closeStore $ \store ->
   bracket (newManagerWithOutputs store quiet generator) stopManager (action store)
 
 spec :: Spec
@@ -101,7 +101,7 @@ spec = describe "Wrap-up outputs" $ do
   describe "the session actor" $ do
     it "builds the outputs from the whole log after wrap-up, commits them and broadcasts them" $ do
       seen <- newIORef []
-      withOutputs (\log' -> writeIORef seen (map (.event) log') >> pure fakeOutputs) $ \store manager -> do
+      withOutputsManager (\log' -> writeIORef seen (map (.event) log') >> pure fakeOutputs) $ \store manager -> do
         sid <- createManagedSession manager En
         sub <- connected manager sid
         _ <- bounded (receive sub)
@@ -121,7 +121,7 @@ spec = describe "Wrap-up outputs" $ do
 
     it "does not build them again for a second wrap-up" $ do
       calls <- newMVar (0 :: Int)
-      withOutputs (\_ -> modifyMVar_ calls (pure . (+ 1)) >> pure fakeOutputs) $ \_ manager -> do
+      withOutputsManager (\_ -> modifyMVar_ calls (pure . (+ 1)) >> pure fakeOutputs) $ \_ manager -> do
         sid <- createManagedSession manager En
         sub <- connected manager sid
         _ <- bounded (receive sub)
@@ -132,7 +132,7 @@ spec = describe "Wrap-up outputs" $ do
         readMVar calls `shouldReturn` 1
 
     it "reports a failing generator and keeps the session usable" $ do
-      withOutputs (\_ -> throwIO (userError "disk on fire")) $ \store manager -> do
+      withOutputsManager (\_ -> throwIO (userError "disk on fire")) $ \store manager -> do
         sid <- createManagedSession manager En
         sub <- connected manager sid
         _ <- bounded (receive sub)
@@ -175,7 +175,7 @@ spec = describe "Wrap-up outputs" $ do
           drain sub `shouldReturn` [WrappedUp]
 
     it "tells a missing session from one without outputs yet" $
-      withOutputs (\_ -> pure fakeOutputs) $ \_ manager -> do
+      withOutputsManager (\_ -> pure fakeOutputs) $ \_ manager -> do
         storedOutputs manager (SessionId "nope") `shouldReturn` NoSuchSession
         sid <- createManagedSession manager En
         storedOutputs manager sid `shouldReturn` OutputsNotReady
@@ -183,7 +183,7 @@ spec = describe "Wrap-up outputs" $ do
   describe "with the real outputs" $ do
     it "turns a seeded session into the three documents" $ do
       generator <- either (fail . Text.unpack) pure (modelOutputs Nothing (\_ -> pure ()))
-      withOutputs generator $ \store manager -> do
+      withOutputsManager generator $ \store manager -> do
         let sid = SessionId "seeded"
         seed store sid seededLog
         sub <- connected manager sid

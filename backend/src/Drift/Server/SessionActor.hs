@@ -3,9 +3,9 @@
 -- | One serialized writer per session. The registry belongs to one manager;
 -- callers must not run two live managers against the same session database.
 module Drift.Server.SessionActor
-  ( BranchGenerator, OutputsGenerator, StoredOutputs (..), Manager, Subscription
-  , newManager, createManagedSession, subscribeSession
-  , newManagerWithOutputs, storedOutputs
+  ( BranchGenerator, CloudGenerator, OutputsGenerator, StoredOutputs (..), Manager, Subscription
+  , newManager, newManagerWithCloud, createManagedSession, subscribeSession
+  , newManagerWithOutputs, withOutputs, storedOutputs
   , newManagerWithAppendObserver, subscribeSessionWithJoinObserver
   , submit, receive, unsubscribe, stopManager
   ) where
@@ -33,9 +33,14 @@ import Drift.Store.SQLite
 -- It runs in a worker after the session is wrapped up, never on the actor.
 type OutputsGenerator = [Stamped] -> IO Outputs
 
+-- | The words of a new session's starting cloud. It may take a while (a model
+-- call) and must not throw; it runs before any lock is taken.
+type CloudGenerator = Lang -> IO [Text]
+
 data Manager = Manager
   { managerStore :: Store
   , managerGenerator :: BranchGenerator
+  , managerCloud :: CloudGenerator
   , managerRegistry :: MVar Registry
   , managerAppendObserver :: SessionId -> [Event] -> Either StoreException () -> IO ()
   , managerOutputs :: Maybe OutputsGenerator
@@ -82,17 +87,26 @@ data ActorState = ActorState
     -- ^ the outputs worker was started for this wrapped-up session
   }
 
+-- | A manager whose sessions start from the offline cloud ("Drift.Model.SessionMock").
 newManager :: Store -> BranchGenerator -> IO Manager
 newManager store generator = newManagerWithAppendObserver store generator (\_ _ _ -> pure ())
 
--- | Like 'newManager', and after a session is wrapped up the generator builds
--- its outputs, which are then committed and broadcast as 'OutputsReady'. A
--- wrapped-up session loaded without outputs (the server stopped mid-way) gets
--- them made when it is next loaded.
+-- | A manager whose sessions start from the given cloud generator.
+newManagerWithCloud :: Store -> BranchGenerator -> CloudGenerator -> IO Manager
+newManagerWithCloud store generator cloud = do
+  manager <- newManager store generator
+  pure manager {managerCloud = cloud}
+
+-- | After a session is wrapped up the generator builds its outputs, which are
+-- then committed and broadcast as 'OutputsReady'. A wrapped-up session loaded
+-- without outputs (the server stopped mid-way) gets them made when it is next
+-- loaded. Combines with any manager, such as one from 'newManagerWithCloud'.
+withOutputs :: OutputsGenerator -> Manager -> Manager
+withOutputs outputs manager = manager {managerOutputs = Just outputs}
+
+-- | 'newManager' with 'withOutputs'.
 newManagerWithOutputs :: Store -> BranchGenerator -> OutputsGenerator -> IO Manager
-newManagerWithOutputs store generator outputs = do
-  registry <- newMVar (Running Map.empty)
-  pure (Manager store generator registry (\_ _ _ -> pure ()) (Just outputs))
+newManagerWithOutputs store generator outputs = withOutputs outputs <$> newManager store generator
 
 -- | Test seam, never sent over the wire. The observer runs after each append
 -- attempt and must return normally; production wiring uses newManager.
@@ -101,7 +115,7 @@ newManagerWithAppendObserver
   -> (SessionId -> [Event] -> Either StoreException () -> IO ()) -> IO Manager
 newManagerWithAppendObserver store generator observer = do
   registry <- newMVar (Running Map.empty)
-  pure (Manager store generator registry observer Nothing)
+  pure (Manager store generator (pure . mockCloud) registry observer Nothing)
 
 data StoredOutputs = NoSuchSession | OutputsNotReady | OutputsStored Outputs
   deriving (Eq, Show)
@@ -122,22 +136,26 @@ storedOutputs manager sid = do
 -- process-local counter or clock value is trusted to prove global uniqueness.
 -- Storage failures propagate; stopped creation throws an IOException.
 createManagedSession :: Manager -> Lang -> IO SessionId
-createManagedSession manager language = modifyMVarMasked manager.managerRegistry $ \case
-  Stopped _ -> throwIO (userError "The session manager is stopped.")
-  Running actors -> do
-    (sid, history) <- createFresh
-    actor <- startActor manager sid history
-    pure (Running (Map.insert sid actor actors), sid)
+createManagedSession manager language = do
+  -- The cloud can take seconds (a model call), so it is made before the
+  -- registry lock, which every connection takes.
+  words' <- manager.managerCloud language
+  modifyMVarMasked manager.managerRegistry $ \case
+    Stopped _ -> throwIO (userError "The session manager is stopped.")
+    Running actors -> do
+      (sid, history) <- createFresh words'
+      actor <- startActor manager sid history
+      pure (Running (Map.insert sid actor actors), sid)
   where
-    createFresh = do
+    createFresh words' = do
       now <- unixMillis
       unique <- hashUnique <$> newUnique
       let sid = SessionId ("session-" <> Text.pack (show now) <> "-" <> Text.pack (show unique))
-          cloud = zipWith Candidate (map CandidateId [1 ..]) (mockCloud language)
+          cloud = zipWith Candidate (map CandidateId [1 ..]) words'
           history = [Stamped 1 now (CloudSpawned language cloud)]
       (createSession manager.managerStore sid history >> pure (sid, history))
         `catch` \failure -> case failure of
-          SessionAlreadyExists _ -> createFresh
+          SessionAlreadyExists _ -> createFresh words'
           _ -> throwIO (failure :: StoreException)
 
 -- | Snapshot and registration are one actor message. The registry lock also
