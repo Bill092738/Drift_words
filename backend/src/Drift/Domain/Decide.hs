@@ -10,6 +10,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
+import Drift.Domain.Entries (decideCuration)
 import Drift.Domain.Types
 import Drift.Domain.Word (cap, wordKey)
 import Drift.Protocol
@@ -53,17 +54,18 @@ decide s command = case command of
       SetDivergence d -> do
         require (finite d && d >= 0 && d <= 1) "Divergence must be a finite number between 0 and 1."
         pure [DivergenceSet d]
-      Promote eid levels -> do
-        knownEntry eid
-        require (levels > 0) "Promotion levels must be positive."
-        pure [EntryPromoted eid levels]
-      Strike eid -> knownEntry eid >> pure [EntryStruck eid]
-      Restore eid -> knownEntry eid >> pure [EntryRestored eid]
+      -- Curation rules live in "Drift.Domain.Entries", shared with the writing pipeline.
+      c@(Promote _ _) -> curate c
+      c@(Strike _) -> curate c
+      c@(Restore _) -> curate c
       -- Exhaustive handling keeps additions to Command visible to -Wall.
       PlaceNode n position rotation -> decide s (PlaceNode n position rotation)
       PlaceSource sid position rotation -> decide s (PlaceSource sid position rotation)
       WrapUp -> decide s WrapUp
-    knownEntry eid = require (Map.member eid s.sessionEntries) "That sidebar entry does not exist."
+    curate c = case decideCuration s.sessionEntries c of
+      Just (Left reason) -> Left (Rejection reason)
+      Just (Right events) -> Right events
+      Nothing -> Left (Rejection "Not a curation command.")
 
 -- | Validate all IDs before filtering words. Previously visible IDs cannot be
 -- recycled even when their new word would otherwise be filtered out.

@@ -7,6 +7,7 @@ module Drift.Domain.Types
 import Data.Map.Strict (Map)
 import Data.Set (Set)
 import Data.Text (Text)
+import Drift.Domain.Entries (Entries)
 import Drift.Protocol
 
 newtype SessionId = SessionId Text deriving (Eq, Ord, Show)
@@ -50,9 +51,7 @@ data Session = Session
   , sessionNextCandidateId :: CandidateId
   , sessionDivergence :: Double
   , sessionSources :: Map SourceId Source
-  , sessionEntries :: Map EntryId Entry
-  , sessionPriorities :: Map EntryId Int -- ^ Cumulative promotion levels; absent means zero.
-  , sessionStruck :: Set EntryId
+  , sessionEntries :: Entries -- ^ Sidebar entries; rules live in "Drift.Domain.Entries".
   , sessionNodePlacements :: Map NodeId Placement
   , sessionSourcePlacements :: Map SourceId Placement
   , sessionWrapped :: Bool

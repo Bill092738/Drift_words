@@ -22,7 +22,7 @@ import qualified Data.Text as Text
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Data.Unique (hashUnique, newUnique)
 import Drift.Domain.Decide (decide, offerBranches)
-import Drift.Domain.State (apply, replay)
+import Drift.Domain.State (applyStamped, replay)
 import Drift.Domain.Types
 import Drift.Model.SessionMock (BranchGenerator, mockCloud)
 import Drift.Protocol
@@ -254,7 +254,7 @@ startActor manager sid history = do
       case persisted of
         Left (_ :: StoreException) -> pure Nothing
         Right () -> do
-          let session = foldl' apply state.stateSession events
+          let session = foldl' applyStamped state.stateSession stamped
               Log newest = state.stateLog
               committed = state
                 { stateSession = session

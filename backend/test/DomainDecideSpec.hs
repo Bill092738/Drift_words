@@ -127,6 +127,9 @@ spec = do
       decide curated (Strike (EntryId 1)) `shouldBe` Right [EntryStruck (EntryId 1)]
       decide (apply curated (EntryStruck (EntryId 1))) (Restore (EntryId 1)) `shouldBe`
         Right [EntryRestored (EntryId 1)]
+      -- Shared rules from Drift.Domain.Entries: no double strike, no restore of a live entry.
+      rejected (decide (apply curated (EntryStruck (EntryId 1))) (Strike (EntryId 1)))
+      rejected (decide curated (Restore (EntryId 1)))
   describe "decide: wrap-up" $ do
     it "emits one wrap event and is idempotent thereafter" $ do
       decide root WrapUp `shouldBe` Right [WrappedUp]

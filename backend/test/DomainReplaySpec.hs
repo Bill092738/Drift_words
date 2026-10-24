@@ -9,6 +9,7 @@ import Data.List (foldl')
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text
+import Drift.Domain.Entries (EntryState (..))
 import Drift.Domain.State
 import Drift.Domain.Types
 import Drift.Domain.Word
@@ -90,10 +91,10 @@ spec = do
           s = live [root, SourceFound src, EntryWritten e, EntryPromoted (EntryId 3) 2,
                     EntryStruck (EntryId 3), EntryRevised revised, EntryPromoted (EntryId 3) 1]
       Map.lookup (SourceId 7) s.sessionSources `shouldBe` Just src
-      Map.lookup (EntryId 3) s.sessionEntries `shouldBe` Just revised
-      Map.lookup (EntryId 3) s.sessionPriorities `shouldBe` Just 3
-      Set.member (EntryId 3) s.sessionStruck `shouldBe` True
-      (apply s (EntryRestored (EntryId 3))).sessionStruck `shouldBe` Set.empty
+      fmap (.entry) (Map.lookup (EntryId 3) s.sessionEntries) `shouldBe` Just revised
+      fmap (.priority) (Map.lookup (EntryId 3) s.sessionEntries) `shouldBe` Just 3
+      fmap (.struck) (Map.lookup (EntryId 3) s.sessionEntries) `shouldBe` Just True
+      fmap (.struck) (Map.lookup (EntryId 3) (apply s (EntryRestored (EntryId 3))).sessionEntries) `shouldBe` Just False
     it "records divergence, latest placements, wrap-up and outputs" $ do
       let out = Outputs "tree" "draft" "final"
           s = live [DivergenceSet 0.8, NodePlaced (NodeId 4) (Vec2 1 2) 0,
@@ -128,7 +129,7 @@ spec = do
               s.sessionWrapped `shouldBe` wrapped
               forM_ [0 .. length chronological] $ \n -> do
                 let prefix = take n chronological
-                replay (Log (reverse prefix)) `shouldBe` live (map (.event) prefix)
+                replay (Log (reverse prefix)) `shouldBe` foldl' applyStamped emptySession prefix
 
 fromStringInt :: Int -> Data.Text.Text
 fromStringInt = Data.Text.pack . show
