@@ -34,6 +34,7 @@ library
     Drift.Pipeline.Branches
     Drift.Pipeline.Citations
     Drift.Pipeline.Prefetch
+    Drift.Pipeline.SessionBranches
     Drift.Pipeline.Writing
     Drift.Protocol
     Drift.Protocol.Options
