@@ -88,7 +88,7 @@ The contract between frontend and backend is the single most important artifact 
 
 | Concern | Choice |
 | --- | --- |
-| Compiler and build | GHC 9.6 via ghcup, cabal |
+| Compiler and build | GHC 9.10 via ghcup, cabal 3.16 |
 | HTTP and WebSocket | `servant-server`, `warp`, `wai-websockets` / `websockets` |
 | JSON and TS generation | `aeson`, `aeson-typescript` |
 | Concurrency | `stm`, `async` (one actor per session, job queues on `TQueue` / `TVar`) |
@@ -262,7 +262,7 @@ The frontend carries most of the product's risk: smooth motion, many objects, an
 | --- | --- | --- |
 | Language and build | TypeScript, Vite, pnpm | Fast iteration; types generated from the backend contract |
 | Desk rendering | **PixiJS v8** | Mature 2D scene graph with a WebGPU renderer and automatic WebGL2 fallback; batched sprites and text; good on mobile |
-| Chrome (sidebar, controls, outputs) | **React 18** | Text-heavy, form-like UI where React is productive; it is never inside the frame loop |
+| Chrome (sidebar, controls, outputs) | **React 19** | Text-heavy, form-like UI where React is productive; it is never inside the frame loop |
 | State | A framework-agnostic store (Zustand vanilla) | Both the canvas engine and React subscribe to the same store |
 | Spatial index | `rbush` | Culling and hit testing as the tree grows |
 | Drift motion | `simplex-noise` | Smooth, organic, low-frequency floating |

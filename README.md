@@ -20,7 +20,7 @@ Language models and web search run in the background. You never talk to an AI.
 | Layer | Technology |
 | --- | --- |
 | Desk rendering | TypeScript, PixiJS v8 (WebGPU with WebGL2 fallback), spring-based motion system |
-| UI chrome | React 18 (sidebar, controls, outputs) |
+| UI chrome | React 19 (sidebar, controls, outputs) |
 | Backend | Haskell: Servant/Warp, STM, event-sourced domain stored as a persistent linked list |
 | AI | A model-agnostic provider slot (any OpenAI-compatible endpoint, local or hosted), with speculative prefetch and embedding-based divergence |
 | Sources and citations | Wikipedia, Wikimedia Commons, OpenAlex, Crossref, arXiv; references rendered by `citeproc`; export with `pandoc` |
@@ -40,8 +40,13 @@ frontend/   TypeScript client: desk engine, desk content, UI chrome
 
 Setup instructions will land with milestone M0. The expected toolchain:
 
-- GHC 9.6 and cabal (via [ghcup](https://www.haskell.org/ghcup/))
-- Node.js 20 LTS and pnpm
+- GHC 9.10 and cabal 3.16 (via [ghcup](https://www.haskell.org/ghcup/))
+- Node.js 24 LTS and pnpm
 - Optional: a local model server with an OpenAI-compatible API (for example Ollama or llama.cpp). Without one, the backend runs on its built-in mock provider.
 
 The frontend can be developed without the backend through its mock transport.
+
+Build notes, verified on Ubuntu 26.04 with GHC 9.10.3:
+
+- `cabal.project` needs `constraints: zlib +bundled-c-zlib, string-interpolate < 1`. The first builds zlib from bundled C sources, so `zlib1g-dev` is not required. The second works around an `aeson-typescript` build failure with `string-interpolate` 1.0.
+- GHC links against `libgmp`, `libffi` and `libtinfo`, so install `libgmp-dev libffi-dev libncurses-dev`. Without sudo, symlinks to the runtime libraries (for example `libgmp.so -> libgmp.so.10`) in a directory on `LIBRARY_PATH` work as a substitute.
