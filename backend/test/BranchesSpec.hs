@@ -98,13 +98,21 @@ spec = do
       drop 2 selected `shouldBe` ["mid", "far"]
 
   describe "branch prompt" $ do
-    it "contains the current word, root path, divergence, and output constraint" $ do
-      let context = BranchContext "rain" ["cloud", "storm", "rain"] 0.7 Set.empty Map.empty 5
-          prompt = buildBranchPrompt context
+    it "contains the current word, root path, divergence in words, and output constraint" $ do
+      let ctx = BranchContext "rain" ["cloud", "storm", "rain"] 0.7 (Set.fromList ["storm", "cloud"]) Map.empty 5
+          prompt = buildBranchPrompt ctx
       T.isInfixOf "rain" prompt `shouldBe` True
       T.isInfixOf "cloud -> storm -> rain" prompt `shouldBe` True
-      T.isInfixOf "0.7" prompt `shouldBe` True
+      T.isInfixOf "surprising, distant associations" prompt `shouldBe` True
+      T.isInfixOf "divergence 0.7" prompt `shouldBe` True
+      T.isInfixOf "Do not use any of these words: rain, cloud, storm." prompt `shouldBe` True
       T.isInfixOf "one word per line" prompt `shouldBe` True
+
+    it "describes the three divergence ranges in words" $ do
+      divergenceDescription 0.1 `shouldBe` "closely related, everyday associations"
+      divergenceDescription 0.5 `shouldBe` "related but not obvious associations"
+      divergenceDescription 0.66 `shouldBe` "related but not obvious associations"
+      divergenceDescription 0.9 `shouldBe` "surprising, distant associations"
 
 clamp01 :: Double -> Double
 clamp01 = max 0 . min 1

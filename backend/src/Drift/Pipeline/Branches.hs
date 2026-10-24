@@ -17,6 +17,7 @@ module Drift.Pipeline.Branches
   , divergenceBand
   , selectCandidates
   , buildBranchPrompt
+  , divergenceDescription
   ) where
 
 import Data.Char (GeneralCategory (..), generalCategory, isAlphaNum, isDigit, isSpace)
@@ -217,9 +218,30 @@ buildBranchPrompt context =
     [ "Generate " <> showText (max 1 (context.branchCount * 2)) <> " candidate branches for the current word."
     , "Current word: " <> context.currentWord
     , "Path from root: " <> T.intercalate " -> " context.pathToRoot
-    , "Divergence: " <> showText context.divergence
+    , "Kind of association: " <> divergenceDescription context.divergence <> " (divergence " <> showText context.divergence <> " on a 0 to 1 scale)."
+    , "Do not use any of these words: " <> T.intercalate ", " excluded <> "."
     , "Return concrete associations as one word per line, with no numbering or explanation."
     ]
+ where
+  -- The current word first, then the chosen words, without repeats.
+  excluded = nubOrdOn normalizeWord (context.currentWord : Set.toList context.chosenWords)
+
+-- | The divergence slider in words, which models follow better than a number.
+divergenceDescription :: Double -> Text
+divergenceDescription value
+  | v < 0.33 = "closely related, everyday associations"
+  | v <= 0.66 = "related but not obvious associations"
+  | otherwise = "surprising, distant associations"
+ where
+  v = clamp01 value
+
+nubOrdOn :: Ord k => (a -> k) -> [a] -> [a]
+nubOrdOn key = go Set.empty
+ where
+  go _ [] = []
+  go seen (x : xs)
+    | Set.member (key x) seen = go seen xs
+    | otherwise = x : go (Set.insert (key x) seen) xs
 
 showText :: Show a => a -> Text
 showText = T.pack . show
