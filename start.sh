@@ -4,6 +4,13 @@ set -u
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+if [[ -f "$ROOT_DIR/.env" ]]; then
+  set -a
+  # Load local settings such as DRIFT_CONFIG and GEMINI_API_KEY.
+  source "$ROOT_DIR/.env"
+  set +a
+fi
+
 error() {
   printf 'Error: %s\n' "$1" >&2
   exit 1
