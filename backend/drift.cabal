@@ -19,18 +19,26 @@ library
   hs-source-dirs:   src
   exposed-modules:
     Drift.Api
+    Drift.Domain.Decide
     Drift.Domain.Entries
+    Drift.Domain.State
+    Drift.Domain.Types
+    Drift.Domain.Word
     Drift.Model.Config
     Drift.Model.Mock
     Drift.Model.OpenAICompat
     Drift.Model.Provider
     Drift.Model.Scheduler
+    Drift.Model.SessionMock
     Drift.Pipeline.Branches
     Drift.Pipeline.Citations
     Drift.Pipeline.Prefetch
     Drift.Pipeline.Writing
     Drift.Protocol
     Drift.Protocol.Options
+    Drift.Server.SessionActor
+    Drift.Server.WebSocket
+    Drift.Store.SQLite
   build-depends:
     , aeson             >=2.2  && <2.4
     , aeson-typescript  >=0.6  && <0.7
@@ -44,9 +52,16 @@ library
     , optparse-applicative >=0.18 && <0.20
     , scientific        >=0.3  && <0.4
     , servant-server    >=0.20 && <0.21
+    , sqlite-simple
     , stm               >=2.5  && <2.6
     , text              >=2.0  && <2.2
+    , time
+    , transformers
     , unicode-transforms >=0.4 && <0.5
+    , wai
+    , wai-websockets
+    , warp              >=3.4  && <3.5
+    , websockets
     , yaml              >=0.11 && <0.12
 
 executable drift-server
@@ -59,6 +74,8 @@ executable drift-server
     , drift
     , servant-server
     , warp           >=3.4 && <3.5
+    , wai-websockets
+    , websockets
 
 executable drift-gen-ts
   import:           shared
@@ -89,11 +106,18 @@ test-suite drift-test
   other-modules:
     BranchesSpec
     CitationsSpec
+    DomainDecideSpec
+    DomainPropertySpec
+    DomainReplaySpec
     EntriesSpec
     ModelProviderSpec
     PrefetchSpec
     ProtocolSpec
     SchedulerSpec
+    ServerSpec
+    SessionActorSpec
+    SessionE2ESpec
+    StoreSpec
     WritingSpec
   ghc-options:      -threaded
   build-depends:
@@ -106,6 +130,15 @@ test-suite drift-test
     , drift
     , filepath
     , hspec       >=2.11 && <2.12
+    , http-client
+    , http-types
+    , network
+    , process
     , QuickCheck  >=2.14 && <2.17
+    , servant-server
+    , sqlite-simple
     , stm
     , text
+    , wai-websockets
+    , warp           >=3.4 && <3.5
+    , websockets
