@@ -21,7 +21,9 @@ data SourceRequest = SourceRequest
   { fromWord :: Maybe Text
   , toWord :: Text
   , pathWords :: [Text]
-  -- ^ words from the root down to 'fromWord', for disambiguation
+  -- ^ words from the root down to 'fromWord'. The relevance check reads the
+  -- nearest of them to rank sources that pass; see
+  -- "Drift.Sources.Relevance".'heuristicVerdict'.
   , lang :: Lang
   }
   deriving stock (Eq, Show)
