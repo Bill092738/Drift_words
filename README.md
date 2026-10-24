@@ -6,7 +6,7 @@ Driftwords is a browser-based tool for the moments when you want to do something
 
 Language models and web search run in the background. You never talk to an AI.
 
-> **Status:** M1 session persistence and transport, the M2 model branch pipeline, the M3 desk engine, the M4 word tree, M6 source objects, and the M7 sidebar and writing pipeline are implemented. M5 end-to-end wiring and M8 outputs remain. "Driftwords" is a working title.
+> **Status:** M1 to M5 are in place: the frontend runs a live session against the backend, with model-generated rings when a model is configured. M6 source search and the M7 writing pipeline are implemented as libraries and in the UI, but the live server does not run them yet. M8 outputs remain. "Driftwords" is a working title.
 
 ## Documents
 
@@ -50,9 +50,15 @@ The frontend can be developed without the backend through its mock transport.
 
 From the repository root, run `make backend-build` and then `make server`. The server listens on port `8080` and stores session events in `backend/drift.sqlite` by default because `make server` starts it from `backend/`. Set `DRIFT_PORT` to choose another port and `DRIFT_DB_PATH` to choose another SQLite file. Relative database paths are resolved from the server's current working directory.
 
-Create a session with `POST /api/sessions` and JSON body `{"lang":"en"}` or `{"lang":"zh"}`. The response is `{"sessionId":"..."}`. Connect the client to `/api/sessions/<sessionId>/ws`. `/api/health` returns plain-text `ok`.
+Create a session with `POST /api/sessions` and JSON body `{"lang":"en"}`. The frontend always creates English sessions; Chinese is out of scope for now. The response is `{"sessionId":"..."}`. Connect the client to `/api/sessions/<sessionId>/ws`. `/api/health` returns plain-text `ok`.
 
-The backend currently uses a deterministic offline mock provider. It provides a fixed initial word cloud and six language-specific branch words; each generated branch word includes the selected node ID, so sessions can continue at arbitrary depth. It does not call a language model or search service.
+By default the backend uses a deterministic offline vocabulary: a fixed initial word cloud and six branch words, each with the selected node ID appended, so sessions can continue at any depth without a model.
+
+To generate rings with a model, set `DRIFT_CONFIG` to a model configuration (see `backend/config.example.yaml`). Its `branches` role generates the rings, and its optional `embeddings` role drives divergence selection. After each ring, the server prefetches the ring of every offered word, so a pick usually finds its ring ready; set `DRIFT_PREFETCH=0` to save model calls. For example: `DRIFT_CONFIG=config.packycode.yaml PACKYCODE_API_KEY=... make server`. The initial word cloud stays fixed for now.
+
+### Run the whole app
+
+`make app` builds the frontend and starts the server, which also serves the built frontend at `http://localhost:8080/` (set `DRIFT_STATIC_DIR` to serve another build). Choose **Live (backend)** in the toolbar, or open `/?live`. The session id is kept in the URL (`?session=...`), so reloading the page restores the same desk, and the page reconnects on its own if the server restarts. With `make dev` instead, the Vite dev server on :5173 proxies `/api` to the backend on :8080.
 
 Run backend tests from `backend/` with `cabal build drift-server && cabal test drift-test --test-show-details=direct`. The real child-process persistence test can be run from the repository root with `make backend-restart-test`; it builds the server, resolves the executable with `cabal list-bin drift-server`, and launches three server processes against one temporary database. Run `make check` for backend build/tests and frontend checks.
 
