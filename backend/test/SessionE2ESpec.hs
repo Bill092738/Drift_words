@@ -52,9 +52,9 @@ spec = describe "M1 server process restart" $
         created <- createSession port "en"
         history <- withSession port (sessionId created) $ \connection -> do
           initial <- receiveEvents connection
-          let cloud = case initial of
-                [Stamped 1 _ (CloudSpawned En candidates)] -> candidates
-                other -> expectationFailure ("Unexpected initial cloud: " <> show other) >> pure []
+          cloud <- case initial of
+            [Stamped 1 _ (CloudSpawned En candidates)] -> pure candidates
+            other -> expectationFailure ("Unexpected initial cloud: " <> show other) >> pure []
           walked <- walkFifteen connection cloud initial
           submitCommand connection 700 (SetDivergence 0.4)
           divergenceEvents <- collectUntil connection (\case DivergenceSet value -> value == 0.4; _ -> False)

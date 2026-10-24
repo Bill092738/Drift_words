@@ -6,7 +6,7 @@ Driftwords is a browser-based tool for the moments when you want to do something
 
 Language models and web search run in the background. You never talk to an AI.
 
-> **Status:** M1 backend session persistence and transport are implemented; runtime build and restart verification remain pending in this environment. "Driftwords" is a working title.
+> **Status:** M1 backend session persistence and transport are implemented and verified locally with GHC 9.10.3, including the real process-restart acceptance test. "Driftwords" is a working title.
 
 ## Documents
 

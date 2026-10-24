@@ -13,7 +13,9 @@ import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
 import Drift.Api
 import Drift.Model.SessionMock (mockBranches)
-import Drift.Protocol (CandidateId (..), ClientMsg (..), Event (..), ServerMsg (..), Stamped (..), Lang (..))
+import Drift.Protocol
+  ( CandidateId (..), ClientMsg (..), Command (..), Event (..), Lang (..)
+  , ServerMsg (..), Stamped (..) )
 import Drift.Server.SessionActor (Manager, stopManager)
 import qualified Drift.Server.SessionActor as Actor
 import Drift.Server.WebSocket (webSocketApp)
@@ -67,13 +69,12 @@ spec = describe "HTTP and WebSocket server" $ do
         sendTextData connection (encode (ClientMsg 7 (StartWithWord "root")))
         generated <- collectThroughSeal connection
         let committed = concatMap eventsOf generated
-            eventKinds = [value | Stamped _ _ value <- committed]
             sequences = [number | Stamped number _ _ <- committed]
         length committed `shouldSatisfy` (>= 4)
         sequences `shouldBe` [2 .. fromIntegral (length committed + 1)]
-        eventKinds `shouldSatisfy` any isNodeChosen
-        eventKinds `shouldSatisfy` any isCandidateStream
-        eventKinds `shouldSatisfy` any isBranchesSeal
+        committed `shouldSatisfy` any isNodeChosen
+        committed `shouldSatisfy` any isCandidateStream
+        committed `shouldSatisfy` any isBranchesSeal
         sendTextData connection ("{\"req\":91,\"command\":{\"type\":\"NoSuchCommand\"}}" :: ByteString.ByteString)
         receiveServerMessage connection `shouldReturn` Rejected 91 "Invalid client message."
         sendTextData connection (encode (ClientMsg 92 (Pick (CandidateId 999999))))
@@ -173,10 +174,12 @@ isBranchesSeal _ = False
 
 expectProtocolClose :: Connection -> IO ()
 expectProtocolClose connection = do
-  result <- timeout 5000000 (try (receiveDataMessage connection) :: IO (Either WebSockets.CloseRequest DataMessage))
+  result <- timeout 5000000
+    (try (receiveDataMessage connection) :: IO (Either WebSockets.ConnectionException DataMessage))
   case result of
     Nothing -> expectationFailure "Timed out waiting for protocol close"
     Just (Left (WebSockets.CloseRequest code _)) -> code `shouldBe` 1002
+    Just (Left other) -> expectationFailure ("Expected close code 1002, got " <> show other)
     Just (Right _) -> expectationFailure "Expected a WebSocket protocol close"
 
 withBackend :: (Int -> Manager -> IO a) -> IO a

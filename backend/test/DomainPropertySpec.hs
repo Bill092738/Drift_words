@@ -13,7 +13,7 @@ import Drift.Domain.Types
 import Drift.Domain.Word
 import Drift.Protocol
 import Test.Hspec
-import Test.QuickCheck
+import Test.QuickCheck hiding (replay)
 
 -- Each generated history starts with a root, admitted batch and chosen child;
 -- subsequent actions mix successful/rejected commands, fresh offers, repeats,

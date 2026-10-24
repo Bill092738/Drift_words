@@ -11,7 +11,7 @@ import Control.Concurrent.Async (race_, withAsync, waitAnyCatch)
 import Control.Concurrent.STM
   ( TMVar, TQueue, atomically, newEmptyTMVarIO, newTQueueIO, putTMVar, readTQueue
   , takeTMVar, writeTQueue )
-import Control.Exception (SomeException, catch, finally, onException, try)
+import Control.Exception (SomeException, catch, finally, onException, throwIO, try)
 import Control.Monad (forever, void)
 import Data.Aeson (Result (..), Value (..), eitherDecode, encode, fromJSON)
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -64,7 +64,15 @@ serveConnection connection subscription = do
           void (try (waitForPeer `catch` \(_ :: SomeException) -> pure ()) :: IO (Either SomeException ()))
           atomically (putTMVar acknowledged ())
       relay = forever $ receive subscription >>= atomically . writeTQueue outgoing . SendMessage
+      -- A peer closing its socket is the normal end of a connection. Keeping
+      -- that exception inside the transport lets the async scope cancel the
+      -- writer/relay and run the subscription cleanup without turning a clean
+      -- client close into a server failure.
       reader = receiveLoop outgoing
+        `catch` \case
+          WebSockets.CloseRequest _ _ -> pure ()
+          WebSockets.ConnectionClosed -> pure ()
+          failure -> throwIO failure
       receiveLoop queue = receiveDataMessage connection >>= \case
         Text payload _ -> case eitherDecode payload of
           Right message -> submit subscription message >> receiveLoop queue
