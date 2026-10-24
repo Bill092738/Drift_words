@@ -71,9 +71,25 @@ spec = do
           malformed = [("alpha", Just [1, 0]), ("beta", Just [1])]
       selectCandidates 2 0.8 Nothing wordsInOrder `shouldBe` ["alpha", "beta"]
       selectCandidates 2 0.8 (Just [1, 0]) malformed `shouldBe` ["alpha", "beta"]
-    it "falls back to prompt order when no candidate lands in the divergence band" $ do
-      let candidates = [("opposite", Just [-1, 0]), ("also-opposite", Just [-2, 0])]
-      selectCandidates 2 0.1 (Just [1, 0]) candidates `shouldBe` ["opposite", "also-opposite"]
+    it "fills from the candidates nearest the band, in model order on ties, when none land in it" $ do
+      let candidates = [("opposite", Just [-1, 0]), ("also-opposite", Just [-2, 0]), ("orthogonal", Just [0, 1])]
+      selectCandidates 2 0.1 (Just [1, 0]) candidates `shouldBe` ["orthogonal", "opposite"]
+      selectCandidates 3 0.1 (Just [1, 0]) candidates `shouldBe` ["orthogonal", "opposite", "also-opposite"]
+
+    it "fills up to the wanted count, in-band candidates first" $ do
+      -- Divergence 0.1 targets a cosine distance of about 0.18 (band 0 to 0.36).
+      let at degrees = Just [cos (degrees * pi / 180), sin (degrees * pi / 180)]
+          candidates =
+            [ ("far", at 90) -- distance 1
+            , ("near-a", at 20) -- distance 0.06, in band
+            , ("opposite", at 180) -- distance 2
+            , ("near-b", at (-35)) -- distance 0.18, in band
+            , ("mid", at 60) -- distance 0.5
+            ]
+          selected = selectCandidates 4 0.1 (Just [1, 0]) candidates
+      length selected `shouldBe` 4
+      take 2 selected `shouldMatchList` ["near-a", "near-b"]
+      drop 2 selected `shouldBe` ["mid", "far"]
 
   describe "branch prompt" $ do
     it "contains the current word, root path, divergence, and output constraint" $ do

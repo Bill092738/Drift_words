@@ -20,7 +20,7 @@ module Drift.Pipeline.Branches
   ) where
 
 import Data.Char (GeneralCategory (..), generalCategory, isAlphaNum, isDigit, isSpace)
-import Data.List (maximumBy)
+import Data.List (maximumBy, partition, sortOn)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (mapMaybe)
 import qualified Data.Set as Set
@@ -144,7 +144,10 @@ divergenceBand value =
       halfWidth = 0.18
    in (max 0 (center - halfWidth), min 2 (center + halfWidth))
 
--- | Select in-band embeddings with deterministic Maximal Marginal Relevance.
+-- | Select in-band embeddings with deterministic Maximal Marginal Relevance,
+-- then fill any remaining slots with the out-of-band candidates closest to the
+-- band's center (ties keep the model's order), so the result has 'wanted'
+-- words whenever that many candidates exist.
 -- If any embedding is unavailable, zero length, or dimensionally incompatible,
 -- preserve provider order instead of returning a partial or surprising result.
 selectCandidates :: Int -> Double -> Maybe Embedding -> [(Text, Maybe Embedding)] -> [Text]
@@ -155,16 +158,20 @@ selectCandidates wanted divergenceValue maybeAnchor candidates
       Just (anchor, embedded) ->
         let (bandMin, bandMax) = divergenceBand divergenceValue
             target = (bandMin + bandMax) / 2
-            inBand =
+            measured =
               [ EmbeddedCandidate index word vector distance
               | (index, (word, vector)) <- zip [0 ..] embedded
               , Just distance <- [cosineDistance anchor vector]
-              , distance >= bandMin
-              , distance <= bandMax
               ]
-         in if null inBand then promptOrder else map candidateWord (mmr wanted target inBand)
+            inside c = c.candidateDistance >= bandMin && c.candidateDistance <= bandMax
+            (inBand, outOfBand) = partition inside measured
+            picked = mmr wanted target inBand
+            -- sortOn is stable, so equal gaps keep the model's order.
+            filler = sortOn (\c -> abs (c.candidateDistance - target)) outOfBand
+         in map candidateWord (picked <> take (wanted - length picked) filler)
  where
   promptOrder = take wanted (map fst candidates)
+
 data EmbeddedCandidate = EmbeddedCandidate
   { candidateIndex :: Int
   , candidateWord :: Text
