@@ -1,6 +1,6 @@
 # Driftwords: A Thinking Workbench for Entropy Up and Entropy Down
 
-Oct 23, 2026 · @Bill
+Oct 24, 2026 · @Bill
 
 ## What it is
 
