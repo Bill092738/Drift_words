@@ -16,6 +16,7 @@ import qualified Data.Text as Text
 import qualified Database.SQLite.Simple as SQL
 import Drift.Domain.State (replay)
 import Drift.Domain.Types
+import Drift.Pipeline.Writing (WritingInput (..), templateEntry)
 import Drift.Model.SessionMock (mockBranches, mockCloud)
 import Drift.Protocol
 import Drift.Server.SessionActor
@@ -381,6 +382,149 @@ spec = describe "Session actor" $ do
         all (\e -> e.atMs > 0) history `shouldBe` True
         length visible `shouldBe` length (nub visible)
         Set.size state.sessionVisited `shouldBe` 15
+
+  describe "live writing" $ do
+    it "writes one template entry for a child and none for the root" $
+      withWriting templateEntry $ \_ store manager -> do
+        (sid, sub) <- startWritingSession manager
+        submit sub (ClientMsg 2 (InsertWord "child"))
+        _ <- events sub
+        written <- entryBatch sub
+        written `shouldBe` [Entry (EntryId 1) (NodeId 2) "root → child" "" []]
+        Just history <- loadEvents store sid
+        length [() | Stamped _ _ (EntryWritten _) <- history] `shouldBe` 1
+
+    it "admits out-of-order completions for old nodes with unique actor-owned IDs" $ do
+      calls <- newTQueueIO
+      let writer input = do
+            release <- newEmptyMVar
+            atomically (writeTQueue calls (input, release))
+            takeMVar release
+            templateEntry input
+      withWriting writer $ \_ store manager -> do
+        (sid, sub) <- startWritingSession manager
+        submit sub (ClientMsg 2 (InsertWord "first"))
+        _ <- events sub
+        (first, releaseFirst) <- bounded (atomically (readTQueue calls))
+        first.path `shouldBe` ["root"]
+        submit sub (ClientMsg 3 (InsertWord "second"))
+        _ <- events sub
+        (second, releaseSecond) <- bounded (atomically (readTQueue calls))
+        second.path `shouldBe` ["root", "first"]
+        submit sub (ClientMsg 4 (Backtrack (NodeId 1)))
+        _ <- events sub
+        putMVar releaseSecond ()
+        entryBatch sub `shouldReturn` [Entry (EntryId 1) (NodeId 3) "first → second" "" []]
+        putMVar releaseFirst ()
+        entryBatch sub `shouldReturn` [Entry (EntryId 2) (NodeId 2) "root → first" "" []]
+        Just history <- loadEvents store sid
+        Map.size (replay (Log (reverse history))).sessionEntries `shouldBe` 2
+
+    it "drops a writer completion after wrap-up" $ do
+      entered <- newEmptyMVar
+      release <- newEmptyMVar
+      done <- newEmptyMVar
+      let writer input = do
+            putMVar entered ()
+            takeMVar release
+            templateEntry input `finally` putMVar done ()
+      withWriting writer $ \_ store manager -> do
+        (sid, sub) <- startWritingSession manager
+        submit sub (ClientMsg 2 (InsertWord "child"))
+        _ <- events sub
+        bounded (takeMVar entered)
+        submit sub (ClientMsg 3 WrapUp)
+        _ <- events sub
+        putMVar release ()
+        bounded (takeMVar done)
+        noMessage sub
+        Just history <- loadEvents store sid
+        Map.null (replay (Log (reverse history))).sessionEntries `shouldBe` True
+
+    it "cancels and joins blocked writers on halt" $ do
+      entered <- newEmptyMVar
+      cancelled <- newEmptyMVar
+      let writer _ = (putMVar entered () >> atomically retry) `finally` putMVar cancelled ()
+      withWriting writer $ \_ _ manager -> do
+        (_, sub) <- startWritingSession manager
+        submit sub (ClientMsg 2 (InsertWord "child"))
+        _ <- events sub
+        bounded (takeMVar entered)
+        bounded (stopManager manager)
+        bounded (takeMVar cancelled)
+        noMessage sub
+
+    it "does not broadcast or retain an entry when append fails" $ do
+      entered <- newEmptyMVar
+      release <- newEmptyMVar
+      let writer input = putMVar entered () >> takeMVar release >> templateEntry input
+      withWriting writer $ \path store manager -> do
+        (sid, sub) <- startWritingSession manager
+        submit sub (ClientMsg 2 (InsertWord "child"))
+        _ <- events sub
+        bounded (takeMVar entered)
+        historyBefore <- loadEvents store sid
+        withRaw path $ \connection -> SQL.execute_ connection
+          "CREATE TRIGGER reject_entry BEFORE INSERT ON events BEGIN SELECT RAISE(ABORT, 'entry failure'); END"
+        putMVar release ()
+        bounded (receive sub) >>= \case
+          Diagnostic LevelError _ -> pure ()
+          other -> expectationFailure (show other)
+        loadEvents store sid `shouldReturn` historyBefore
+        noMessage sub
+        withRaw path $ \connection -> SQL.execute_ connection "DROP TRIGGER reject_entry"
+        submit sub (ClientMsg 3 (SetDivergence 0.4))
+        map (.event) <$> events sub `shouldReturn` [DivergenceSet 0.4]
+
+    it "isolates an ordinary writer exception and keeps exploration usable" $
+      withWriting (\_ -> throwIO (userError "writer failure")) $ \_ _ manager -> do
+        (_, sub) <- startWritingSession manager
+        submit sub (ClientMsg 2 (InsertWord "child"))
+        _ <- events sub
+        bounded (receive sub) >>= \case
+          Diagnostic LevelWarning _ -> pure ()
+          other -> expectationFailure (show other)
+        entryBatch sub `shouldReturn` [Entry (EntryId 1) (NodeId 2) "root → child" "" []]
+        submit sub (ClientMsg 3 (SetDivergence 0.3))
+        map (.event) <$> events sub `shouldReturn` [DivergenceSet 0.3]
+
+    it "recovers a missing child entry on restart without duplicating existing entries" $
+      withDatabase $ \path -> bracket (openStore path) closeStore $ \store -> do
+        sid <- bracket (newManager store quiet) stopManager $ \manager -> do
+          (sid, sub) <- startWritingSession manager
+          submit sub (ClientMsg 2 (InsertWord "child"))
+          _ <- events sub
+          pure sid
+        let recover = bracket (newManagerWith store (Pipelines quiet (Just templateEntry) Nothing)) stopManager
+        recover $ \manager -> do
+          sub <- connected manager sid
+          snapshot <- events sub
+          let existing = [entry | Stamped _ _ (EntryWritten entry) <- snapshot]
+          recovered <- if null existing then entryBatch sub else pure existing
+          recovered `shouldBe` [Entry (EntryId 1) (NodeId 2) "root → child" "" []]
+        recover $ \manager -> do
+          sub <- connected manager sid
+          snapshot <- events sub
+          length [() | Stamped _ _ (EntryWritten _) <- snapshot] `shouldBe` 1
+          noMessage sub
+
+withWriting :: EntryWriter -> (FilePath -> Store -> Manager -> IO ()) -> IO ()
+withWriting writer action = withDatabase $ \path -> bracket (openStore path) closeStore $ \store ->
+  bracket (newManagerWith store (Pipelines quiet (Just writer) Nothing)) stopManager (action path store)
+
+startWritingSession :: Manager -> IO (SessionId, Subscription)
+startWritingSession manager = do
+  sid <- createManagedSession manager En
+  sub <- connected manager sid
+  _ <- events sub
+  submit sub (ClientMsg 1 (StartWithWord "root"))
+  _ <- events sub
+  pure (sid, sub)
+
+entryBatch :: Subscription -> IO [Entry]
+entryBatch sub = do
+  batch <- events sub
+  pure [entry | Stamped _ _ (EntryWritten entry) <- batch]
 
 quiet :: BranchGenerator
 quiet _ _ = atomically retry

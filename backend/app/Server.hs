@@ -8,6 +8,8 @@
 --   @branches@ role generates the rings, and its optional @embeddings@ role
 --   drives divergence selection. Without it the server uses the deterministic
 --   offline vocabulary ("Drift.Model.SessionMock"), which needs no model.
+-- * @DRIFT_WRITING@: set to 0 to disable sidebar entries. By default each
+--   non-root edge receives a deterministic template entry, without a model.
 -- * @DRIFT_PREFETCH@: set to 0 to turn off speculative prefetch of the next
 --   rings (on by default; it costs one extra model call per offered word).
 -- * @DRIFT_STATIC_DIR@: the built frontend to serve at @/@ (default
@@ -24,7 +26,8 @@ import Drift.Model.Provider (ModelProvider (..))
 import Drift.Model.SessionMock (BranchGenerator, mockBranches)
 import Drift.Pipeline.BranchService (closeBranchService, newBranchService)
 import Drift.Pipeline.SessionBranches (liveBranches)
-import Drift.Server.SessionActor (newManager, stopManager)
+import Drift.Pipeline.Writing (templateEntry)
+import Drift.Server.SessionActor (Pipelines (..), newManagerWith, stopManager)
 import Drift.Server.WebSocket (webSocketApp)
 import Drift.Store.SQLite (closeStore, openStore)
 import Network.HTTP.Types (status200, status404)
@@ -46,14 +49,16 @@ main = do
   port <- maybe 8080 read <$> lookupEnv "DRIFT_PORT"
   databasePath <- maybe "drift.sqlite" id <$> lookupEnv "DRIFT_DB_PATH"
   configPath <- lookupEnv "DRIFT_CONFIG"
+  writing <- (/= Just "0") <$> lookupEnv "DRIFT_WRITING"
   prefetch <- (/= Just "0") <$> lookupEnv "DRIFT_PREFETCH"
   staticDir <- maybe "../frontend/dist" id <$> lookupEnv "DRIFT_STATIC_DIR"
   frontend <- frontendApp staticDir
   withGenerator configPath prefetch $ \generator -> do
+    putStrLn (if writing then "writing: deterministic template" else "writing: disabled")
     putStrLn ("drift-server listening on http://localhost:" <> show port)
     putStrLn ("session database: " <> databasePath)
     bracket (openStore databasePath) closeStore $ \store ->
-      bracket (newManager store generator) stopManager $ \manager -> do
+      bracket (newManagerWith store (Pipelines generator (if writing then Just templateEntry else Nothing) Nothing)) stopManager $ \manager -> do
         let backend = serve api (server manager)
             app request respond = case pathInfo request of
               "api" : _ -> backend request respond

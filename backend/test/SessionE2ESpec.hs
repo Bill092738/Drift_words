@@ -43,7 +43,59 @@ import System.Timeout (timeout)
 import Test.Hspec
 
 spec :: Spec
-spec = describe "M1 server process restart" $
+spec = do
+  writingSpec
+  restartSpec
+
+writingSpec :: Spec
+writingSpec = describe "M7 server writing" $ do
+  it "defaults to template writing with no model config and replays the entry after restart" $ do
+    executable <- resolveServerExecutable
+    port <- reservePort
+    withTemporaryDatabase $ \databasePath -> do
+      (identifier, history) <- withWritingServer Nothing executable port databasePath $ do
+        waitForHealth port
+        created <- createSession port "en"
+        withSession port (sessionId created) $ \connection -> do
+          _ <- receiveEvents connection
+          submitCommand connection 1 (StartWithWord "root")
+          _ <- collectUntil connection isSeal
+          submitCommand connection 2 (InsertWord "child")
+          _ <- collectUntil connection isSeal
+          pure ()
+        -- Inspect snapshots outside the socket callback: a missing entry is
+        -- a bounded assertion failure, rather than a stalled socket read.
+        snapshot <- awaitEntryHistory port (sessionId created) 50
+        [entry | Stamped _ _ (EntryWritten entry) <- snapshot]
+          `shouldBe` [Entry (EntryId 1) (NodeId 2) "root \8594 child" "" []]
+        history <- withSession port (sessionId created) $ \connection -> do
+          replayed <- receiveEvents connection
+          submitCommand connection 3 WrapUp
+          wrapped <- collectUntil connection (== WrappedUp)
+          pure (replayed <> wrapped)
+        pure (sessionId created, history)
+      withWritingServer Nothing executable port databasePath $ do
+        waitForHealth port
+        withSession port identifier $ \connection -> receiveEvents connection `shouldReturn` history
+
+  it "disables entries explicitly with DRIFT_WRITING=0" $ do
+    executable <- resolveServerExecutable
+    port <- reservePort
+    withTemporaryDatabase $ \databasePath -> withWritingServer (Just "0") executable port databasePath $ do
+      waitForHealth port
+      created <- createSession port "en"
+      withSession port (sessionId created) $ \connection -> do
+        initial <- receiveEvents connection
+        submitCommand connection 1 (StartWithWord "root")
+        root <- collectUntil connection isSeal
+        submitCommand connection 2 (InsertWord "child")
+        child <- collectUntil connection isSeal
+        submitCommand connection 3 WrapUp
+        wrapped <- collectUntil connection (== WrappedUp)
+        filter (isEntry . eventOf) (initial <> root <> child <> wrapped) `shouldBe` []
+
+restartSpec :: Spec
+restartSpec = describe "M1 server process restart" $
   it "replays and continues an explored session across real process restarts" $ do
     executable <- resolveServerExecutable
     port <- reservePort
@@ -136,14 +188,20 @@ spec = describe "M1 server process restart" $
           map eventOf finalHistory `shouldSatisfy` elem WrappedUp
 
 withServer :: FilePath -> Int -> FilePath -> IO a -> IO a
-withServer executable port databasePath action =
-  bracket (startServer executable port databasePath) stopServer (const action)
+withServer = withWritingServer (Just "0")
 
-startServer :: FilePath -> Int -> FilePath -> IO ProcessHandle
-startServer executable port databasePath = do
+withWritingServer :: Maybe String -> FilePath -> Int -> FilePath -> IO a -> IO a
+withWritingServer writing executable port databasePath action =
+  bracket (startServer writing executable port databasePath) stopServer (const action)
+
+startServer :: Maybe String -> FilePath -> Int -> FilePath -> IO ProcessHandle
+startServer writing executable port databasePath = do
   inherited <- getEnvironment
   let overrides = [("DRIFT_PORT", show port), ("DRIFT_DB_PATH", databasePath)]
-      environment = overrides <> filter ((`notElem` map fst overrides) . fst) inherited
+        <> maybe [] (\value -> [("DRIFT_WRITING", value)]) writing
+      offlineVariables = ["DRIFT_CONFIG", "DRIFT_SOURCES", "DRIFT_WRITING", "OPENALEX_API_KEY",
+        "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"]
+      environment = overrides <> filter ((`notElem` (offlineVariables <> map fst overrides)) . fst) inherited
       process = (proc executable []) {env = Just environment}
   if os == "mingw32"
     then processHandle <$> createProcess process
@@ -334,3 +392,13 @@ chosenNodeIds stamped = [identifier | Stamped _ _ (NodeChosen identifier _ _ _ _
 
 assertContiguous :: [Stamped] -> IO ()
 assertContiguous stamped = [number | Stamped number _ _ <- stamped] `shouldBe` [1 .. length stamped]
+
+isEntry :: Event -> Bool
+isEntry (EntryWritten _) = True
+isEntry _ = False
+
+awaitEntryHistory :: Int -> Text -> Int -> IO [Stamped]
+awaitEntryHistory port identifier remaining = do
+  history <- withSession port identifier receiveEvents
+  if any (isEntry . eventOf) history || remaining <= 0 then pure history
+    else threadDelay 10000 >> awaitEntryHistory port identifier (remaining - 1)
