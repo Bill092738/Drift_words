@@ -13,6 +13,10 @@ providers:
     api_key_env: null
 roles:
   branches: mock
+  # Optional. Mock embeddings are hashes of the word and carry no meaning:
+  # use them only in tests, together with mock branches. With a real model,
+  # point this at a provider with an embedding_model, or leave it out to keep
+  # the model's own order (prompt-only selection).
   embeddings: mock
   writing: mock
   final: mock

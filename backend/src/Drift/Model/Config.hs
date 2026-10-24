@@ -9,6 +9,7 @@ module Drift.Model.Config
   , loadModelConfig
   , resolveRole
   , resolveProvider
+  , resolveOptionalProvider
   , toOpenAISettings
   , createModelProvider
   ) where
@@ -97,6 +98,14 @@ resolveProvider :: ModelConfig -> ProviderRole -> Either ConfigError ProviderCon
 resolveProvider config role = do
   name <- resolveRole config role
   maybe (Left (UnknownProvider name)) Right (lookup name (providers config))
+
+-- | Like 'resolveProvider' for a role that may be left out of the config, such
+-- as embeddings: a missing role is 'Nothing', but a role naming an absent
+-- provider is still an error.
+resolveOptionalProvider :: ModelConfig -> ProviderRole -> Either ConfigError (Maybe ProviderConfig)
+resolveOptionalProvider config role = case resolveProvider config role of
+  Left (MissingRole _) -> Right Nothing
+  other -> Just <$> other
 
 toOpenAISettings :: ProviderConfig -> IO OpenAISettings
 toOpenAISettings config = do

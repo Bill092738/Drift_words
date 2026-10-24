@@ -13,6 +13,5 @@ providers:
     api_key_env: null
 roles:
   branches: packycode
-  embeddings: mock
   writing: packycode
   final: packycode

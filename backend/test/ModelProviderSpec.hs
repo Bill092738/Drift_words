@@ -2,6 +2,7 @@
 
 module ModelProviderSpec (spec) where
 
+import Control.Monad (forM_)
 import Data.IORef (newIORef, modifyIORef', readIORef)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -52,6 +53,22 @@ spec = do
     it "rejects a role that names an absent provider" $ do
       let config = ModelConfig {providers = [], roles = [(BranchesRole, "missing")]}
       resolveRole config BranchesRole `shouldBe` Left (UnknownProvider "missing")
+
+    it "treats an optional role that is left out as absent, not as an error" $ do
+      let local = ProviderConfig OpenAICompatible "http://localhost:11434/v1" "model" Nothing Nothing
+          withoutEmbeddings = ModelConfig {providers = [("local", local)], roles = [(BranchesRole, "local")]}
+          withEmbeddings = withoutEmbeddings {roles = [(BranchesRole, "local"), (EmbeddingsRole, "local")]}
+          dangling = withoutEmbeddings {roles = [(EmbeddingsRole, "missing")]}
+      resolveOptionalProvider withoutEmbeddings EmbeddingsRole `shouldBe` Right Nothing
+      resolveOptionalProvider withEmbeddings EmbeddingsRole `shouldBe` Right (Just local)
+      resolveOptionalProvider dangling EmbeddingsRole `shouldBe` Left (UnknownProvider "missing")
+
+    it "loads the committed configs, with no mock embeddings behind a real model" $
+      forM_ ["config.packycode.yaml", "config.codex-sale.yaml"] $ \path -> do
+        loaded <- loadModelConfig path
+        case loaded of
+          Left err -> expectationFailure (path <> ": " <> T.unpack err)
+          Right config -> resolveOptionalProvider config EmbeddingsRole `shouldBe` Right Nothing
 
   describe "OpenAI-compatible response parsing" $ do
     it "parses completion and embedding payloads" $ do

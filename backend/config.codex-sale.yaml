@@ -13,6 +13,5 @@ providers:
     api_key_env: null
 roles:
   branches: codex-sale
-  embeddings: mock
   writing: codex-sale
   final: codex-sale

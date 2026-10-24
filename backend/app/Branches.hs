@@ -16,6 +16,7 @@ import Drift.Model.Scheduler
 import Drift.Pipeline.Branches
 import Options.Applicative
 import System.Exit (die)
+import System.IO (hPutStrLn, stderr)
 
 data Options = Options
   { optionWord :: Text
@@ -31,9 +32,15 @@ main = do
   configResult <- loadModelConfig (optionConfig options)
   config <- either (die . T.unpack) pure configResult
   branchConfig <- either (die . show) pure (resolveProvider config BranchesRole)
-  embeddingConfig <- either (die . show) pure (resolveProvider config EmbeddingsRole)
+  embeddingConfig <- either (die . show) pure (resolveOptionalProvider config EmbeddingsRole)
   branchProvider <- createModelProvider branchConfig
-  embeddingProvider <- createModelProvider embeddingConfig
+  -- Without an embeddings role, selection keeps the model's order (prompt-only).
+  embedder <- case embeddingConfig of
+    Nothing -> Nothing <$ hPutStrLn stderr "no embeddings role configured: selecting candidates in the model's order"
+    Just embeddingProviderConfig -> do
+      when (providerKind embeddingProviderConfig == Mock && providerKind branchConfig /= Mock) $
+        hPutStrLn stderr "warning: mock embeddings carry no meaning; divergence filtering will be random"
+      embed <$> createModelProvider embeddingProviderConfig
   let context = BranchContext
         { currentWord = optionWord options
         , pathToRoot = [optionWord options]
@@ -54,7 +61,7 @@ main = do
   generated <- either (die . show) pure generatedResult
   (pendingParser, streamedWords) <- readIORef streamState
   let candidates = filterCandidates context (streamedWords <> finishCandidateStream pendingParser)
-  (anchor, rows) <- case embed embeddingProvider of
+  (anchor, rows) <- case embedder of
     Nothing -> pure (Nothing, map (\word -> (word, Nothing)) candidates)
     Just embedTexts -> do
       vectors <- embedTexts (optionWord options : candidates)
