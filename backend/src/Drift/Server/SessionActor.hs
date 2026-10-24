@@ -4,8 +4,9 @@
 -- | One serialized writer per session. The registry belongs to one manager;
 -- callers must not run two live managers against the same session database.
 module Drift.Server.SessionActor
-  ( BranchGenerator, EntryWriter, SourceSearch, Pipelines (..), Manager, Subscription
-  , newManager, newManagerWith, createManagedSession, subscribeSession
+  ( BranchGenerator, CloudGenerator, EntryWriter, SourceSearch, Pipelines (..), Manager, Subscription
+  , newManager, newManagerWith, newManagerWithCloud, newManagerWithPipelinesAndCloud
+  , createManagedSession, subscribeSession
   , newManagerWithAppendObserver, subscribeSessionWithJoinObserver
   , newManagerWithSourceWait
   , sourceConcurrency, sourceQueueCapacity, sourceWaitMicros
@@ -38,6 +39,10 @@ import Drift.Store.SQLite
 type EntryWriter = WritingInput -> IO Entry
 type SourceSearch = SourceRequest -> (SourceDraft -> IO ()) -> IO ()
 
+-- | The words of a new session's starting cloud. It may take a while (a model
+-- call) and must not throw; it runs before any lock is taken.
+type CloudGenerator = Lang -> IO [Text]
+
 data Pipelines = Pipelines
   { pipeBranches :: BranchGenerator
   , pipeWriter :: Maybe EntryWriter
@@ -65,7 +70,7 @@ createManager store pipelines observer = mask $ \_ -> do
       workers <- replicateM sourceConcurrency $ asyncWithUnmask $ \unmask ->
         unmask (forever (atomically (readTBQueue queue) >>= id))
       pure (Just (SourceRuntime queue workers))
-  pure (Manager store pipelines registry observer runtime (threadDelay sourceWaitMicros))
+  pure (Manager store pipelines (pure . mockCloud) registry observer runtime (threadDelay sourceWaitMicros))
 
 -- | One shared queue/pool per server, including work from different sessions.
 -- The queue contains closures, never durable jobs; a full queue drops newest.
@@ -79,6 +84,7 @@ sourceWaitMicros = 250000
 data Manager = Manager
   { managerStore :: Store
   , managerPipelines :: Pipelines
+  , managerCloud :: CloudGenerator
   , managerRegistry :: MVar Registry
   , managerAppendObserver :: SessionId -> [Event] -> Either StoreException () -> IO ()
   , managerSourceRuntime :: Maybe SourceRuntime
@@ -128,8 +134,20 @@ data ActorState = ActorState
   , stateWritingStarted :: Set.Set NodeId
   }
 
+-- | A manager whose sessions start from the offline cloud ("Drift.Model.SessionMock").
 newManager :: Store -> BranchGenerator -> IO Manager
 newManager store generator = newManagerWithAppendObserver store generator (\_ _ _ -> pure ())
+
+-- | A manager whose sessions start from the given cloud generator.
+newManagerWithCloud :: Store -> BranchGenerator -> CloudGenerator -> IO Manager
+newManagerWithCloud store generator cloud =
+  newManagerWithPipelinesAndCloud store (Pipelines generator Nothing Nothing) cloud
+
+-- | Full live pipelines whose sessions use a custom cloud generator.
+newManagerWithPipelinesAndCloud :: Store -> Pipelines -> CloudGenerator -> IO Manager
+newManagerWithPipelinesAndCloud store pipelines cloud = do
+  manager <- newManagerWith store pipelines
+  pure manager {managerCloud = cloud}
 
 -- | Test seam, never sent over the wire. The observer runs after each append
 -- attempt and must return normally; production wiring uses newManager.
@@ -143,22 +161,26 @@ newManagerWithAppendObserver store generator observer =
 -- process-local counter or clock value is trusted to prove global uniqueness.
 -- Storage failures propagate; stopped creation throws an IOException.
 createManagedSession :: Manager -> Lang -> IO SessionId
-createManagedSession manager language = modifyMVarMasked manager.managerRegistry $ \case
-  Stopped _ -> throwIO (userError "The session manager is stopped.")
-  Running actors -> do
-    (sid, history) <- createFresh
-    actor <- startActor manager sid history
-    pure (Running (Map.insert sid actor actors), sid)
+createManagedSession manager language = do
+  -- The cloud can take seconds (a model call), so it is made before the
+  -- registry lock, which every connection takes.
+  words' <- manager.managerCloud language
+  modifyMVarMasked manager.managerRegistry $ \case
+    Stopped _ -> throwIO (userError "The session manager is stopped.")
+    Running actors -> do
+      (sid, history) <- createFresh words'
+      actor <- startActor manager sid history
+      pure (Running (Map.insert sid actor actors), sid)
   where
-    createFresh = do
+    createFresh words' = do
       now <- unixMillis
       unique <- hashUnique <$> newUnique
       let sid = SessionId ("session-" <> Text.pack (show now) <> "-" <> Text.pack (show unique))
-          cloud = zipWith Candidate (map CandidateId [1 ..]) (mockCloud language)
+          cloud = zipWith Candidate (map CandidateId [1 ..]) words'
           history = [Stamped 1 now (CloudSpawned language cloud)]
       (createSession manager.managerStore sid history >> pure (sid, history))
         `catch` \failure -> case failure of
-          SessionAlreadyExists _ -> createFresh
+          SessionAlreadyExists _ -> createFresh words'
           _ -> throwIO (failure :: StoreException)
 
 -- | Snapshot and registration are one actor message. The registry lock also

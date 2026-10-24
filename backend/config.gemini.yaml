@@ -1,0 +1,29 @@
+# Gemini is active for the cloud, rings and embeddings. Writing/final roles are
+# reserved for follow-up integration; the current server writes template notes
+# and M8 output is pending. The key is read from GEMINI_API_KEY; never put it in
+# this file.
+#
+#   DRIFT_CONFIG=config.gemini.yaml GEMINI_API_KEY=... cabal run drift-server
+#
+# `kind: gemini` is the Gemini API's OpenAI-compatible endpoint with the
+# settings Gemini 3 models need (see Drift.Model.Config): reasoning_effort low,
+# no temperature, no output-token limit. Any of them can be overridden here.
+providers:
+  # Future notes and final documents: configured now, not invoked by the server.
+  gemini:
+    kind: gemini
+    model: gemini-3.8-flash
+    embedding_model: gemini-embedding-001
+  # Rings and the starting cloud are latency-critical: a lite model answers in
+  # about 1.4 s, where 3.8 Flash takes 1.5 to 12 s (measured October 2026,
+  # reasoning_effort low).
+  gemini-lite:
+    kind: gemini
+    model: gemini-3.1-flash-lite
+    embedding_model: gemini-embedding-001
+roles:
+  branches: gemini-lite
+  embeddings: gemini
+  cloud: gemini-lite
+  writing: gemini
+  final: gemini

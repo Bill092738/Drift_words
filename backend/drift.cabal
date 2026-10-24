@@ -34,6 +34,7 @@ library
     Drift.Pipeline.BranchService
     Drift.Pipeline.Branches
     Drift.Pipeline.Citations
+    Drift.Pipeline.Cloud
     Drift.Pipeline.Prefetch
     Drift.Pipeline.SessionBranches
     Drift.Pipeline.Sources

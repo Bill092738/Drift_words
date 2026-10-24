@@ -12,7 +12,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Drift.Model.Config
 import Drift.Model.Mock
-import Drift.Model.OpenAICompat (chatCompletionPayload, httpErrorMessage, parseChatCompletion, parseEmbeddingResponse, parseSseData, responsesPayload, temperatureFor)
+import Drift.Model.OpenAICompat (chatCompletionPayload, defaultRequestOptions, httpErrorMessage, parseChatCompletion, parseEmbeddingResponse, parseSseData, responsesPayload, temperatureFor)
 import Drift.Model.Provider
 import Test.Hspec
 
@@ -79,7 +79,7 @@ spec = do
   describe "provider role routing" $ do
     it "resolves a configured role to its provider" $ do
       let config = ModelConfig
-            { providers = [("local", ProviderConfig OpenAICompatible "http://localhost:11434/v1" "model" Nothing Nothing)]
+            { providers = [("local", ProviderConfig OpenAICompatible "http://localhost:11434/v1" "model" Nothing Nothing defaultRequestOptions)]
             , roles = [(BranchesRole, "local"), (EmbeddingsRole, "local")]
             }
       resolveRole config BranchesRole `shouldBe` Right "local"
@@ -90,7 +90,7 @@ spec = do
       resolveRole config BranchesRole `shouldBe` Left (UnknownProvider "missing")
 
     it "treats an optional role that is left out as absent, not as an error" $ do
-      let local = ProviderConfig OpenAICompatible "http://localhost:11434/v1" "model" Nothing Nothing
+      let local = ProviderConfig OpenAICompatible "http://localhost:11434/v1" "model" Nothing Nothing defaultRequestOptions
           withoutEmbeddings = ModelConfig {providers = [("local", local)], roles = [(BranchesRole, "local")]}
           withEmbeddings = withoutEmbeddings {roles = [(BranchesRole, "local"), (EmbeddingsRole, "local")]}
           dangling = withoutEmbeddings {roles = [(EmbeddingsRole, "missing")]}

@@ -52,6 +52,42 @@ spec = describe "Session actor" $ do
           fresh `shouldNotBe` sid
           loadEvents store sid `shouldReturn` Just history
 
+  it "combines a custom cloud with live notes and sources, then replays without regenerating" $
+    withDatabase $ \path -> do
+      let customCloud _ = pure ["custom-root"]
+          search _ emit = emit sourceDraft
+          branches _ _ = pure ["child"]
+          pipelines = Pipelines branches (Just templateEntry) (Just search)
+      sid <- bracket (openStore path) closeStore $ \store ->
+        bracket (newManagerWithPipelinesAndCloud store pipelines customCloud) stopManager $ \manager -> do
+          sid <- createManagedSession manager En
+          sub <- connected manager sid
+          initial <- events sub
+          map (.event) initial `shouldBe`
+            [CloudSpawned En [Candidate (CandidateId 1) "custom-root"]]
+          submit sub (ClientMsg 1 (Pick (CandidateId 1)))
+          _ <- events sub
+          offered <- awaitActor sub (\case BranchesOffered {} -> True; _ -> False)
+          child <- case [candidate | BranchesOffered _ [candidate] <- offered] of
+            [candidate] -> pure candidate
+            other -> expectationFailure ("Expected one child candidate, got " <> show other) >> fail "invalid child ring"
+          submit sub (ClientMsg 2 (Pick child.candidateId))
+          _ <- events sub
+          sourceEvents <- awaitActor sub (\case SourceFound {} -> True; _ -> False)
+          entryEvents <- awaitActor sub (\case EntryWritten {} -> True; _ -> False)
+          [source.sourceId | SourceFound source <- sourceEvents] `shouldBe` [SourceId 1]
+          [entry.cites | EntryWritten entry <- entryEvents] `shouldBe` [[SourceId 1]]
+          pure sid
+      bracket (openStore path) closeStore $ \store ->
+        bracket
+          (newManagerWithPipelinesAndCloud store pipelines (\_ -> error "existing sessions must not regenerate their cloud"))
+          stopManager $ \manager -> do
+            sub <- connected manager sid
+            snapshot <- events sub
+            [candidate.word | Stamped _ _ (CloudSpawned _ [candidate]) <- snapshot] `shouldBe` ["custom-root"]
+            length [() | Stamped _ _ (SourceFound _) <- snapshot] `shouldBe` 1
+            [entry.cites | Stamped _ _ (EntryWritten entry) <- snapshot] `shouldBe` [[SourceId 1]]
+
   it "broadcasts commits to two subscribers but echoes the exact rejection request only to its sender" $
     withEngine quiet $ \_ _ manager -> do
       sid <- createManagedSession manager En

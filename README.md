@@ -62,11 +62,36 @@ The frontend creates English sessions. Retrieval currently uses an English word-
 
 For an offline session, leave `DRIFT_CONFIG` unset and `DRIFT_SOURCES` unset (or `0`); leave `DRIFT_WRITING` unset to keep template notes. For a source-enabled session, set `DRIFT_SOURCES=1` before starting the same server. Startup reports modes and whether an OpenAlex key is present, never the key value. HTTP diagnostics redact `api_key` values.
 
-To generate rings with a model, set `DRIFT_CONFIG` to a model configuration (see `backend/config.example.yaml`). Its `branches` role generates the rings, and its optional `embeddings` role drives divergence selection. After each ring, the server prefetches the ring of every offered word, so a pick usually finds its ring ready; set `DRIFT_PREFETCH=0` to save model calls. For example: `DRIFT_CONFIG=config.packycode.yaml PACKYCODE_API_KEY=... make server`. The initial word cloud stays fixed for now.
+To generate rings with a model, set `DRIFT_CONFIG` to a model configuration (see `backend/config.gemini.yaml` and `backend/config.example.yaml`). Its `branches` role generates the rings, and its optional `embeddings` role drives divergence selection. After each ring, the server prefetches the ring of every offered word, so a pick usually finds its ring ready; set `DRIFT_PREFETCH=0` to save model calls. An optional `cloud` role makes each session's starting cloud; without it the cloud is the fixed offline list.
+
+### Run on Gemini (the demo setup)
+
+Gemini is the model behind the demo. Export your key, then run `make demo`:
+
+```
+export GEMINI_API_KEY=...   # in your shell only; never put it in a file in the repo
+make demo                   # builds the frontend, starts drift-server with config.gemini.yaml
+```
+
+Open `http://localhost:8080/?live`. `backend/config.gemini.yaml` routes the roles like this:
+
+| Role | Model | Why |
+| --- | --- | --- |
+| `branches`, `cloud` | `gemini-3.1-flash-lite` | about 1.4 s per answer; rings and the cloud are on the critical path |
+| `writing`, `final` | `gemini-3.8-flash` | configured for future integration; current notes are templates and M8 final output is pending |
+| `embeddings` | `gemini-embedding-001` | divergence band; about 0.5 s per ring |
+
+To put 3.8 Flash behind the rings too, set `branches: gemini` in that file. Expect a 4 to 10 s wait whenever a pick misses the prefetch (the first pick, a backtrack, a typed word).
+
+`kind: gemini` in a model configuration is Gemini's OpenAI-compatible endpoint with the settings Gemini 3 needs: `reasoning_effort: low` (Gemini 3 cannot stop thinking, and 3.8 Flash rejects `minimal`), no `temperature`, no output-token limit (Gemini counts thinking tokens against it, so a small limit returns an empty answer), and parallel prefetch. Every provider accepts these as options: `reasoning_effort`, `send_temperature`, `limit_output_tokens`, `timeout_seconds` and `concurrent_requests`.
+
+Prefetch makes about 12 extra requests per pick (6 rings and 6 embedding calls), so a pick usually finds its ring ready (60 to 150 ms in testing, against about 1.5 s for a miss). Set `DRIFT_PREFETCH=0` to save quota.
 
 ### Run the whole app
 
 `make app` builds the frontend and starts the server, which also serves the built frontend at `http://localhost:8080/` (set `DRIFT_STATIC_DIR` to serve another build). Choose **Live (backend)** in the toolbar, or open `/?live`. The session id is kept in the URL (`?session=...`), so reloading the page restores the same desk, and the page reconnects on its own if the server restarts. With `make dev` instead, the Vite dev server on :5173 proxies `/api` to the backend on :8080.
+
+For local development with both processes running separately, use `./start.sh` on Linux/macOS or double-click `start.cmd` on Windows. Each launcher checks that `cabal`, `pnpm`, and the expected project files are available before starting the backend and frontend. The Windows launcher opens one Command Prompt window per service.
 
 Run backend tests from `backend/` with `cabal build drift-server && cabal test drift-test --test-show-details=direct`. The real child-process persistence test can be run from the repository root with `make backend-restart-test`; it builds the server, resolves the executable with `cabal list-bin drift-server`, and launches three server processes against one temporary database. Run `make check` for backend build/tests and frontend checks.
 

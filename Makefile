@@ -5,8 +5,9 @@
 #   make server     run the backend on :8080
 #   make dev        run the frontend dev server (proxies /api to :8080)
 #   make app        build the frontend and serve the whole app from the backend on :8080
+#   make demo       model-backed cloud/rings/embeddings; notes remain templates (needs GEMINI_API_KEY)
 
-.PHONY: protocol check backend-build backend-test backend-restart-test frontend-install frontend-check server dev app
+.PHONY: protocol check backend-build backend-test backend-restart-test frontend-install frontend-check server dev app demo
 
 protocol:
 	cd backend && cabal run -v0 drift-gen-ts -- ../frontend/src/protocol/generated.ts
@@ -38,3 +39,9 @@ dev:
 app:
 	cd frontend && pnpm build
 	cd backend && cabal run drift-server
+
+demo:
+	@test -n "$$GEMINI_API_KEY" || { echo "Set GEMINI_API_KEY first (export it in your shell; never commit it)."; exit 1; }
+	cd frontend && pnpm build
+	@echo "Open http://localhost:8080/?live"
+	cd backend && DRIFT_CONFIG=config.gemini.yaml cabal run drift-server
