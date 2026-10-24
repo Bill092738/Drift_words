@@ -6,8 +6,11 @@ import { createStubEngine } from './stubEngine.ts';
 import './desk.css';
 
 /** The infinite desk: a canvas engine with the word tree scene on top. */
-export function Desk({ store }: { store: StoreApi<SessionStore> }) {
+export function Desk({ store, onScene }: { store: StoreApi<SessionStore>; onScene?: (scene: DeskScene | null) => void }) {
   const host = useRef<HTMLDivElement>(null);
+  // Kept in a ref so a new callback does not rebuild the scene.
+  const sceneCallback = useRef(onScene);
+  sceneCallback.current = onScene;
 
   useEffect(() => {
     const el = host.current;
@@ -25,7 +28,9 @@ export function Desk({ store }: { store: StoreApi<SessionStore> }) {
       if (new URLSearchParams(location.search).has('debug')) {
         (window as unknown as { __desk?: unknown }).__desk = scene;
       }
+      sceneCallback.current?.(scene);
       cleanup = () => {
+        sceneCallback.current?.(null);
         scene.destroy();
         engine.destroy();
       };

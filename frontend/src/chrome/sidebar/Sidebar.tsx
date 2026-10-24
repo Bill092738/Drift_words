@@ -13,7 +13,7 @@ import './sidebar.css';
 
 interface Props {
   store: StoreApi<SessionStore>;
-  /** Asks the desk to bring a source object into view. Wired up in M4/M6. */
+  /** Asks the desk to bring a source object into view and focus it. */
   onLocateSource?: (id: SourceId) => void;
 }
 

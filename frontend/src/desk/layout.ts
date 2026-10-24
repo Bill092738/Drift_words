@@ -68,3 +68,50 @@ export function placeChild(
     }
   }
 }
+
+/** How far back along its edge, from the child node, a source lands (0 to 1). */
+export const SOURCE_BACK = 0.55;
+/** Sideways distance from the edge to a source object. */
+export const SOURCE_SIDE = 95;
+/** Closest a source may sit to a node, and to another source. */
+export const SOURCE_NODE_GAP = 110;
+export const SOURCE_GAP = 92;
+/** Largest tilt of a landed source object, radians (about 15°). */
+export const SOURCE_MAX_TILT = Math.PI / 12;
+
+/**
+ * Where a source object lands: behind its edge, that is, back from the child
+ * node toward the parent and off to one side of the line, tilted by a small
+ * random angle. Crowded spots are skipped by sliding along the edge and
+ * further out. A root node (no parent) uses the space below it.
+ * Deterministic for a given `random`.
+ */
+export function placeSource(
+  node: Vec,
+  parent: Vec | null,
+  nodes: readonly Vec[],
+  sources: readonly Vec[],
+  random: () => number,
+): { pos: Vec; angle: number } {
+  const tilt = (random() * 2 - 1) * SOURCE_MAX_TILT;
+  const firstSide = random() < 0.5 ? 1 : -1;
+  const back = parent ? angleOf(node, parent) : Math.PI / 2;
+  const length = parent ? distance(node, parent) : CHILD_DISTANCE;
+  const free = (p: Vec) =>
+    nodes.every((o) => distance(o, p) >= SOURCE_NODE_GAP) && sources.every((o) => distance(o, p) >= SOURCE_GAP);
+
+  // Candidates in order of preference: both sides of the edge, sliding back
+  // and forth along it, then stepping further away from the line.
+  const along = [SOURCE_BACK, 0.35, 0.75, 0.2, 0.9];
+  for (let out = 0; out < 8; out++) {
+    for (const t of along) {
+      for (const side of [firstSide, -firstSide]) {
+        const base = polar(node, back, length * t);
+        const pos = polar(base, back + side * (Math.PI / 2), SOURCE_SIDE + out * 60);
+        if (free(pos)) return { pos, angle: tilt };
+      }
+    }
+  }
+  // Very crowded: fall back to the preferred spot.
+  return { pos: polar(polar(node, back, length * SOURCE_BACK), back + firstSide * (Math.PI / 2), SOURCE_SIDE), angle: tilt };
+}

@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { StoreApi } from 'zustand/vanilla';
 import { Controls } from './chrome/controls/Controls.tsx';
 import { Sidebar } from './chrome/sidebar/Sidebar.tsx';
 import { Desk } from './desk/Desk.tsx';
+import type { DeskScene } from './desk/DeskScene.ts';
 import { createSessionStore, type SessionStore } from './store/store.ts';
 import { fixtures } from './transport/fixtures.ts';
 import { answerDeterministic, MockTransport } from './transport/mock.ts';
@@ -23,6 +24,7 @@ export function App() {
   const [speed, setSpeed] = useState<number>(1);
   const [run, setRun] = useState(0);
   const [store, setStore] = useState<StoreApi<SessionStore> | null>(null);
+  const desk = useRef<DeskScene | null>(null);
 
   useEffect(() => {
     let transport: Transport;
@@ -43,9 +45,11 @@ export function App() {
 
   return (
     <>
-      {store && <Desk store={store} />}
+      {store && <Desk store={store} onScene={(scene) => (desk.current = scene)} />}
       {store && <Controls store={store} />}
-      {store && <Sidebar key={`${mode}-${speed}-${run}`} store={store} />}
+      {store && (
+        <Sidebar key={`${mode}-${speed}-${run}`} store={store} onLocateSource={(id) => desk.current?.locateSource(id)} />
+      )}
       <div className="dev-toolbar" role="toolbar" aria-label="Session source">
         <strong>Driftwords</strong>
         <select value={mode} onChange={(e) => setMode(e.target.value)} aria-label="Session source">

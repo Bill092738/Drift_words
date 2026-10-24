@@ -3,11 +3,12 @@ import { createNoise2D } from 'simplex-noise';
 import type { StoreApi } from 'zustand/vanilla';
 import type { Engine, FrameInfo, Intent, Vec } from '../engine/api.ts';
 import { springs } from '../engine/api.ts';
-import type { Candidate, CandidateId, NodeId } from '../protocol/index.ts';
-import type { NodeState, SessionState } from '../store/session.ts';
+import type { Candidate, CandidateId, NodeId, SourceId } from '../protocol/index.ts';
+import type { NodeState, SessionState, SourceState } from '../store/session.ts';
 import type { SessionStore } from '../store/store.ts';
 import { rng } from '../transport/wordbank.ts';
-import { angleOf, cloudLayout, placeChild, polar, RING_RADIUS, ringAngle } from './layout.ts';
+import { angleOf, cloudLayout, placeChild, placeSource, polar, RING_RADIUS, ringAngle } from './layout.ts';
+import { SourceObject } from './SourceObject.ts';
 import { readTheme, type DeskTheme } from './theme.ts';
 import { WordTile } from './WordTile.ts';
 
@@ -26,9 +27,16 @@ const NARROW_SCREEN_PX = 720;
 const NARROW_ZOOM = 0.7;
 const DRIFT_AMPLITUDE = 12;
 const DRIFT_FREQUENCY = 0.06;
+/** Seconds between sources that arrive in the same batch, so they land one by one. */
+const SOURCE_STAGGER = 0.12;
+/** The camera moves toward a focused source only this far, keeping the tree in view. */
+const FOCUS_PULL = 0.6;
+/** Focusing a source while zoomed out further than this zooms in to read it. */
+const FOCUS_MIN_ZOOM = 0.8;
 
 const candidateKey = (id: CandidateId) => `c${id}`;
 const nodeKey = (id: NodeId) => `n${id}`;
+const sourceKey = (id: SourceId) => `s${id}`;
 
 /**
  * The word tree on the desk. It renders the session state through the engine
@@ -54,6 +62,10 @@ export class DeskScene {
   private faded: { tile: WordTile; generation: number }[] = [];
   private generation = 0;
   private readonly edges = new Graphics();
+  private readonly sources = new Map<SourceId, SourceObject>();
+  /** The source lifted toward the viewer; a second tap opens it. */
+  private focusedSource: SourceId | null = null;
+  private readonly reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   private readonly baseZoom: number;
   private prev: SessionState | null = null;
@@ -75,9 +87,15 @@ export class DeskScene {
     const retheme = () => {
       this.theme = readTheme();
       for (const t of this.allTiles()) t.setTheme(this.theme);
+      for (const o of this.sources.values()) o.setTheme(this.theme);
     };
     scheme.addEventListener('change', retheme);
     this.disposers.push(() => scheme.removeEventListener('change', retheme));
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') this.focusSource(null);
+    };
+    window.addEventListener('keydown', onKey);
+    this.disposers.push(() => window.removeEventListener('keydown', onKey));
     this.sync(store.getState().state);
   }
 
@@ -86,6 +104,10 @@ export class DeskScene {
     for (const t of this.allTiles()) {
       this.engine.remove(t.id);
       t.destroy();
+    }
+    for (const o of this.sources.values()) {
+      this.engine.remove(o.id);
+      o.destroy();
     }
     this.engine.remove('edges');
     this.edges.destroy();
@@ -126,6 +148,87 @@ export class DeskScene {
         this.addCandidates(streamed, false);
       }
     }
+
+    // A source whose node was not on the desk yet is retried on later syncs.
+    if (s.sources !== prev?.sources || this.sources.size < s.sources.size) this.syncSources(s);
+  }
+
+  private syncSources(s: SessionState): void {
+    let batch = 0;
+    for (const src of s.sources.values()) {
+      const obj = this.sources.get(src.source.sourceId);
+      if (obj === undefined) {
+        if (this.addSource(src, batch)) batch++;
+        continue;
+      }
+      // Placements recorded earlier (after a reload, or by another client) win.
+      const p = src.placement;
+      if (p && (Math.abs(p.pos.x - obj.target.x) > 0.5 || Math.abs(p.pos.y - obj.target.y) > 0.5 || p.angle !== obj.angle)) {
+        obj.moveTo(p.pos, p.angle);
+      }
+    }
+  }
+
+  /**
+   * Lands a new source behind the edge into its node. Returns false while that
+   * node is not on the desk yet; the next sync tries again.
+   */
+  private addSource({ source, placement }: SourceState, batch: number): boolean {
+    const nodeTile = this.nodes.get(source.node);
+    if (nodeTile === undefined) return false;
+    let pos: Vec;
+    let angle: number;
+    if (placement) {
+      ({ pos, angle } = placement);
+    } else {
+      const parent = this.prev?.nodes.get(source.node)?.parent;
+      const parentTile = parent == null ? undefined : this.nodes.get(parent);
+      ({ pos, angle } = placeSource(
+        nodeTile.target,
+        parentTile?.target ?? null,
+        [...this.nodes.values()].map((t) => t.target),
+        [...this.sources.values()].map((o) => o.target),
+        this.random,
+      ));
+    }
+    const obj = new SourceObject(sourceKey(source.sourceId), source, pos, angle, this.theme, placement === null, this.reducedMotion);
+    obj.appear(batch * SOURCE_STAGGER);
+    this.sources.set(source.sourceId, obj);
+    this.engine.add('sources', obj);
+    if (placement === null) this.store.getState().send({ type: 'PlaceSource', sourceId: source.sourceId, pos, angle });
+    return true;
+  }
+
+  /** Lifts one source toward the viewer (or none), putting any other back. */
+  private focusSource(id: SourceId | null): void {
+    if (id === this.focusedSource) return;
+    const prev = this.focusedSource === null ? undefined : this.sources.get(this.focusedSource);
+    if (prev) {
+      prev.setFocused(false);
+      this.engine.remove(prev.id);
+      this.engine.add('sources', prev);
+    }
+    this.focusedSource = id;
+    const next = id === null ? undefined : this.sources.get(id);
+    if (next) {
+      next.setFocused(true);
+      // Above the words while it is lifted.
+      this.engine.remove(next.id);
+      this.engine.add('focus', next);
+      const { center: c, zoom } = this.engine.camera;
+      const t = next.target;
+      if (zoom < FOCUS_MIN_ZOOM) this.engine.camera.glideTo(t, FOCUS_MIN_ZOOM);
+      else this.engine.camera.glideTo({ x: c.x + (t.x - c.x) * FOCUS_PULL, y: c.y + (t.y - c.y) * FOCUS_PULL });
+    }
+  }
+
+  /** Brings a source into view and focuses it (the sidebar's fallback list). */
+  locateSource(id: SourceId): void {
+    const obj = this.sources.get(id);
+    if (obj === undefined) return;
+    this.focusSource(null);
+    this.focusSource(id);
+    this.engine.camera.glideTo(obj.target);
   }
 
   private spawnCloud(candidates: readonly Candidate[], alreadyStarted: boolean): void {
@@ -291,6 +394,12 @@ export class DeskScene {
     for (const t of this.cloud.values()) this.applyDrift(t, time, 1);
     for (const f of this.faded) this.applyDrift(f.tile, time, 0.7);
     for (const t of this.allTiles()) t.update(dt);
+    for (const o of this.sources.values()) {
+      const moving = o.moving;
+      o.update(dt);
+      // Re-index while it falls or changes size, and once more as it comes to rest.
+      if (moving) this.engine.moved(o.id);
+    }
 
     // Remove faded tiles that have vanished.
     const gone = this.faded.filter((f) => f.tile.gone);
@@ -342,15 +451,34 @@ export class DeskScene {
   // Input
 
   private intent(i: Intent): void {
-    if (i.type !== 'select') return;
+    if (i.type === 'background') {
+      this.focusSource(null);
+      return;
+    }
     const send = this.store.getState().send;
     const id = Number(i.id.slice(1));
+    if (i.id.startsWith('s')) {
+      // First tap lifts it, a second tap opens the original material.
+      if (i.type === 'open' || this.focusedSource === id) this.openSource(id);
+      else this.focusSource(id);
+      return;
+    }
+    if (i.type !== 'select') return;
+    this.focusSource(null);
     if (i.id.startsWith('c')) {
       const tile = this.ring.get(id) ?? this.cloud.get(id);
       if (tile && tile.variant !== 'faded') send({ type: 'Pick', candidateId: id });
     } else if (i.id.startsWith('n') && id !== this.ringNode) {
       send({ type: 'Backtrack', node: id });
     }
+  }
+
+  private openSource(id: SourceId): void {
+    const obj = this.sources.get(id);
+    if (obj === undefined) return;
+    this.focusSource(id);
+    // Runs inside the tap's pointer handler, so popup blockers allow it.
+    window.open(obj.source.url, '_blank', 'noopener,noreferrer');
   }
 
   // ---------------------------------------------------------------------------
@@ -373,6 +501,14 @@ export class DeskScene {
     return [...this.allTiles()].map((t) => {
       const p = this.engine.camera.worldToScreen(t.position);
       return { id: t.id, word: t.word, variant: t.variant, x: p.x, y: p.y };
+    });
+  }
+
+  /** For tests and debugging: every source object with its screen position. */
+  debugSources(): { id: string; kind: string; title: string; focused: boolean; x: number; y: number }[] {
+    return [...this.sources.values()].map((o) => {
+      const p = this.engine.camera.worldToScreen(o.position);
+      return { id: o.id, kind: o.source.kind, title: o.source.title, focused: o.focused, x: p.x, y: p.y };
     });
   }
 
