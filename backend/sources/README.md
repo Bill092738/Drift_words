@@ -28,7 +28,7 @@ Entries, sources, citations, curation and placements are replayed from SQLite. A
 
 ## HTTP behavior
 
-- **OpenAlex** receives the optional `OPENALEX_API_KEY`; startup logs only whether it is present. The pipeline makes one search per edge. After a 429 for a spent budget (`x-ratelimit-remaining` at 0) the client pauses until midnight UTC; another 429 pauses it for 2 seconds. Current provider quotas and availability are external conditions, not guarantees from the offline test suite.
+- **OpenAlex** receives the optional `OPENALEX_API_KEY`; startup logs only whether it is present. The pipeline makes one search per edge. After HTTP 429, a numeric `Retry-After` takes priority. Without it, a numeric `x-ratelimit-remaining` at or below zero selects numeric `x-ratelimit-reset`, falling back to 60 seconds if reset is absent or invalid; positive remaining budget selects 2 seconds. Missing or invalid remaining-budget data selects 60 seconds. Numeric waits are rounded up and clamped to 1–86,400 seconds. Current provider quotas and availability are external conditions, not guarantees from the offline test suite.
 - **Wikipedia** and **doi.org**: a descriptive User-Agent and a short gap between requests. Responses are cached for an hour, at most 512 of them.
 - **Crossref search** and **arXiv search** are not used yet; their provider-specific request policies belong to that future integration.
 
