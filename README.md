@@ -6,7 +6,7 @@ Driftwords is a browser-based tool for the moments when you want to do something
 
 Language models and web search run in the background. You never talk to an AI.
 
-> **Status:** planning. The concept and technical plan are written; no runnable code yet. "Driftwords" is a working title.
+> **Status:** M1 backend session persistence and transport are implemented and verified locally with GHC 9.10.3, including the real process-restart acceptance test. "Driftwords" is a working title.
 
 ## Documents
 
@@ -28,7 +28,7 @@ Language models and web search run in the background. You never talk to an AI.
 
 See [TECH_ROADMAP.md](TECH_ROADMAP.md) for the reasoning behind each choice.
 
-## Repository layout (planned)
+## Repository layout
 
 ```
 protocol/   shared command/event contract and fixtures
@@ -36,15 +36,25 @@ backend/    Haskell server, domain, AI pipelines, outputs
 frontend/   TypeScript client: desk engine, desk content, UI chrome
 ```
 
-## Development (planned)
+## Development
 
-Setup instructions will land with milestone M0. The expected toolchain:
+The expected toolchain:
 
 - GHC 9.10 and cabal 3.16 (via [ghcup](https://www.haskell.org/ghcup/))
 - Node.js 24 LTS and pnpm
 - Optional: a local model server with an OpenAI-compatible API (for example Ollama or llama.cpp). Without one, the backend runs on its built-in mock provider.
 
 The frontend can be developed without the backend through its mock transport.
+
+### Run the backend
+
+From the repository root, run `make backend-build` and then `make server`. The server listens on port `8080` and stores session events in `backend/drift.sqlite` by default because `make server` starts it from `backend/`. Set `DRIFT_PORT` to choose another port and `DRIFT_DB_PATH` to choose another SQLite file. Relative database paths are resolved from the server's current working directory.
+
+Create a session with `POST /api/sessions` and JSON body `{"lang":"en"}` or `{"lang":"zh"}`. The response is `{"sessionId":"..."}`. Connect the client to `/api/sessions/<sessionId>/ws`. `/api/health` returns plain-text `ok`.
+
+The backend currently uses a deterministic offline mock provider. It provides a fixed initial word cloud and six language-specific branch words; each generated branch word includes the selected node ID, so sessions can continue at arbitrary depth. It does not call a language model or search service.
+
+Run backend tests from `backend/` with `cabal build drift-server && cabal test drift-test --test-show-details=direct`. The real child-process persistence test can be run from the repository root with `make backend-restart-test`; it builds the server, resolves the executable with `cabal list-bin drift-server`, and launches three server processes against one temporary database. Run `make check` for backend build/tests and frontend checks.
 
 Build notes, verified on Ubuntu 26.04 with GHC 9.10.3:
 
