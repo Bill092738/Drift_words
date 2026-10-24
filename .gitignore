@@ -1,0 +1,27 @@
+# Local reference material (hackathon guides etc.). Kept on disk for the team
+# and AI agents to read, never pushed.
+/references/
+
+# Haskell
+dist-newstyle/
+.ghc.environment.*
+cabal.project.local*
+
+# Node / Vite
+node_modules/
+dist/
+*.tsbuildinfo
+.vite/
+
+# Runtime data and secrets
+*.db
+*.db-journal
+.env
+.env.*
+!.env.example
+config.yaml
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store

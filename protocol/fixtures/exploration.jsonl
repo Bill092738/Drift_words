@@ -1,0 +1,78 @@
+{"seq":1,"atMs":1792854000000,"event":{"type":"CloudSpawned","lang":"en","candidates":[{"candidateId":1,"word":"tide"},{"candidateId":2,"word":"lantern"},{"candidateId":3,"word":"entropy"},{"candidateId":4,"word":"orchard"},{"candidateId":5,"word":"signal"},{"candidateId":6,"word":"glacier"},{"candidateId":7,"word":"ritual"},{"candidateId":8,"word":"velvet"},{"candidateId":9,"word":"compass"},{"candidateId":10,"word":"fungus"},{"candidateId":11,"word":"echo"},{"candidateId":12,"word":"harbor"}]}}
+{"seq":2,"atMs":1792854005200,"event":{"type":"NodeChosen","node":1,"parent":null,"word":"entropy","origin":"cloud","fromCandidate":3}}
+{"seq":3,"atMs":1792854005550,"event":{"type":"CandidateStreamed","node":1,"candidate":{"candidateId":13,"word":"information"}}}
+{"seq":4,"atMs":1792854005660,"event":{"type":"CandidateStreamed","node":1,"candidate":{"candidateId":14,"word":"disorder"}}}
+{"seq":5,"atMs":1792854005770,"event":{"type":"CandidateStreamed","node":1,"candidate":{"candidateId":15,"word":"time"}}}
+{"seq":6,"atMs":1792854005880,"event":{"type":"CandidateStreamed","node":1,"candidate":{"candidateId":16,"word":"compression"}}}
+{"seq":7,"atMs":1792854005990,"event":{"type":"CandidateStreamed","node":1,"candidate":{"candidateId":17,"word":"Boltzmann"}}}
+{"seq":8,"atMs":1792854006100,"event":{"type":"CandidateStreamed","node":1,"candidate":{"candidateId":18,"word":"decay"}}}
+{"seq":9,"atMs":1792854006120,"event":{"type":"BranchesOffered","node":1,"candidates":[{"candidateId":13,"word":"information"},{"candidateId":14,"word":"disorder"},{"candidateId":15,"word":"time"},{"candidateId":16,"word":"compression"},{"candidateId":17,"word":"Boltzmann"},{"candidateId":18,"word":"decay"}]}}
+{"seq":10,"atMs":1792854010220,"event":{"type":"NodeChosen","node":2,"parent":1,"word":"information","origin":"branch","fromCandidate":13}}
+{"seq":11,"atMs":1792854010570,"event":{"type":"CandidateStreamed","node":2,"candidate":{"candidateId":19,"word":"Shannon"}}}
+{"seq":12,"atMs":1792854010680,"event":{"type":"CandidateStreamed","node":2,"candidate":{"candidateId":20,"word":"noise"}}}
+{"seq":13,"atMs":1792854010790,"event":{"type":"CandidateStreamed","node":2,"candidate":{"candidateId":21,"word":"meaning"}}}
+{"seq":14,"atMs":1792854010900,"event":{"type":"CandidateStreamed","node":2,"candidate":{"candidateId":22,"word":"bits"}}}
+{"seq":15,"atMs":1792854011010,"event":{"type":"CandidateStreamed","node":2,"candidate":{"candidateId":23,"word":"DNA"}}}
+{"seq":16,"atMs":1792854011120,"event":{"type":"CandidateStreamed","node":2,"candidate":{"candidateId":24,"word":"signal"}}}
+{"seq":17,"atMs":1792854011140,"event":{"type":"BranchesOffered","node":2,"candidates":[{"candidateId":19,"word":"Shannon"},{"candidateId":20,"word":"noise"},{"candidateId":21,"word":"meaning"},{"candidateId":22,"word":"bits"},{"candidateId":23,"word":"DNA"},{"candidateId":24,"word":"signal"}]}}
+{"seq":18,"atMs":1792854012040,"event":{"type":"EntryWritten","entry":{"entryId":1,"node":2,"relation":"Entropy measures information","explanation":"Shannon borrowed the word entropy for the average surprise of a message: the less predictable a source, the more information each symbol carries.","cites":[]}}}
+{"seq":19,"atMs":1792854012840,"event":{"type":"SourceFound","source":{"sourceId":1,"node":2,"kind":"webPage","title":"Entropy (information theory)","site":"Wikipedia","url":"https://en.wikipedia.org/wiki/Entropy_(information_theory)","thumbnailUrl":null,"csl":{"type":"entry-encyclopedia","title":"Entropy (information theory)","container-title":"Wikipedia","URL":"https://en.wikipedia.org/wiki/Entropy_(information_theory)"}}}}
+{"seq":20,"atMs":1792854014040,"event":{"type":"SourceFound","source":{"sourceId":2,"node":2,"kind":"paper","title":"A Mathematical Theory of Communication","site":"Bell System Technical Journal","url":"https://doi.org/10.1002/j.1538-7305.1948.tb01338.x","thumbnailUrl":null,"csl":{"type":"article-journal","title":"A Mathematical Theory of Communication","author":[{"family":"Shannon","given":"C. E."}],"container-title":"Bell System Technical Journal","volume":"27","issue":"3","page":"379-423","issued":{"date-parts":[[1948]]},"DOI":"10.1002/j.1538-7305.1948.tb01338.x"}}}}
+{"seq":21,"atMs":1792854014340,"event":{"type":"EntryRevised","entry":{"entryId":1,"node":2,"relation":"Entropy measures information","explanation":"Shannon borrowed the word entropy for the average surprise of a message: the less predictable a source, the more information each symbol carries.","cites":[1,2]}}}
+{"seq":22,"atMs":1792854017940,"event":{"type":"NodeChosen","node":3,"parent":2,"word":"noise","origin":"branch","fromCandidate":20}}
+{"seq":23,"atMs":1792854018290,"event":{"type":"CandidateStreamed","node":3,"candidate":{"candidateId":25,"word":"randomness"}}}
+{"seq":24,"atMs":1792854018400,"event":{"type":"CandidateStreamed","node":3,"candidate":{"candidateId":26,"word":"static"}}}
+{"seq":25,"atMs":1792854018510,"event":{"type":"CandidateStreamed","node":3,"candidate":{"candidateId":27,"word":"music"}}}
+{"seq":26,"atMs":1792854018620,"event":{"type":"CandidateStreamed","node":3,"candidate":{"candidateId":28,"word":"silence"}}}
+{"seq":27,"atMs":1792854018730,"event":{"type":"CandidateStreamed","node":3,"candidate":{"candidateId":29,"word":"dither"}}}
+{"seq":28,"atMs":1792854018840,"event":{"type":"CandidateStreamed","node":3,"candidate":{"candidateId":30,"word":"creativity"}}}
+{"seq":29,"atMs":1792854018860,"event":{"type":"BranchesOffered","node":3,"candidates":[{"candidateId":25,"word":"randomness"},{"candidateId":26,"word":"static"},{"candidateId":27,"word":"music"},{"candidateId":28,"word":"silence"},{"candidateId":29,"word":"dither"},{"candidateId":30,"word":"creativity"}]}}
+{"seq":30,"atMs":1792854019960,"event":{"type":"EntryWritten","entry":{"entryId":2,"node":3,"relation":"Noise is information you did not ask for","explanation":"In a channel, noise is the unpredictable part of the signal; maximal entropy looks like pure noise.","cites":[]}}}
+{"seq":31,"atMs":1792854021860,"event":{"type":"SourceFound","source":{"sourceId":3,"node":3,"kind":"audio","title":"White noise","site":"Wikimedia Commons","url":"https://commons.wikimedia.org/wiki/File:White_noise.ogg","thumbnailUrl":null,"csl":{"type":"song","title":"White noise","publisher":"Wikimedia Commons"}}}}
+{"seq":32,"atMs":1792854022060,"event":{"type":"EntryRevised","entry":{"entryId":2,"node":3,"relation":"Noise is information you did not ask for","explanation":"In a channel, noise is the unpredictable part of the signal; maximal entropy looks like pure noise.","cites":[3]}}}
+{"seq":33,"atMs":1792854024460,"event":{"type":"DivergenceSet","divergence":0.8}}
+{"seq":34,"atMs":1792854026560,"event":{"type":"NodeChosen","node":4,"parent":3,"word":"creativity","origin":"branch","fromCandidate":30}}
+{"seq":35,"atMs":1792854027160,"event":{"type":"CandidateStreamed","node":4,"candidate":{"candidateId":31,"word":"jazz"}}}
+{"seq":36,"atMs":1792854027300,"event":{"type":"CandidateStreamed","node":4,"candidate":{"candidateId":32,"word":"accident"}}}
+{"seq":37,"atMs":1792854027440,"event":{"type":"CandidateStreamed","node":4,"candidate":{"candidateId":33,"word":"play"}}}
+{"seq":38,"atMs":1792854027580,"event":{"type":"CandidateStreamed","node":4,"candidate":{"candidateId":34,"word":"boredom"}}}
+{"seq":39,"atMs":1792854027720,"event":{"type":"CandidateStreamed","node":4,"candidate":{"candidateId":35,"word":"mutation"}}}
+{"seq":40,"atMs":1792854027860,"event":{"type":"CandidateStreamed","node":4,"candidate":{"candidateId":36,"word":"serendipity"}}}
+{"seq":41,"atMs":1792854027880,"event":{"type":"BranchesOffered","node":4,"candidates":[{"candidateId":31,"word":"jazz"},{"candidateId":32,"word":"accident"},{"candidateId":33,"word":"play"},{"candidateId":34,"word":"boredom"},{"candidateId":35,"word":"mutation"},{"candidateId":36,"word":"serendipity"}]}}
+{"seq":42,"atMs":1792854028880,"event":{"type":"EntryWritten","entry":{"entryId":3,"node":4,"relation":"Noise as a source of new ideas","explanation":"Random perturbation can knock a search out of a rut; some creative techniques inject noise on purpose.","cites":[]}}}
+{"seq":43,"atMs":1792854033680,"event":{"type":"NodeRevisited","node":2}}
+{"seq":44,"atMs":1792854034030,"event":{"type":"CandidateStreamed","node":2,"candidate":{"candidateId":37,"word":"attention"}}}
+{"seq":45,"atMs":1792854034140,"event":{"type":"CandidateStreamed","node":2,"candidate":{"candidateId":38,"word":"library"}}}
+{"seq":46,"atMs":1792854034250,"event":{"type":"CandidateStreamed","node":2,"candidate":{"candidateId":39,"word":"privacy"}}}
+{"seq":47,"atMs":1792854034360,"event":{"type":"CandidateStreamed","node":2,"candidate":{"candidateId":40,"word":"language"}}}
+{"seq":48,"atMs":1792854034470,"event":{"type":"CandidateStreamed","node":2,"candidate":{"candidateId":41,"word":"DNA"}}}
+{"seq":49,"atMs":1792854034580,"event":{"type":"CandidateStreamed","node":2,"candidate":{"candidateId":42,"word":"compression"}}}
+{"seq":50,"atMs":1792854034600,"event":{"type":"BranchesOffered","node":2,"candidates":[{"candidateId":37,"word":"attention"},{"candidateId":38,"word":"library"},{"candidateId":39,"word":"privacy"},{"candidateId":40,"word":"language"},{"candidateId":41,"word":"DNA"},{"candidateId":42,"word":"compression"}]}}
+{"seq":51,"atMs":1792854038500,"event":{"type":"NodeChosen","node":5,"parent":2,"word":"attention","origin":"branch","fromCandidate":37}}
+{"seq":52,"atMs":1792854038850,"event":{"type":"CandidateStreamed","node":5,"candidate":{"candidateId":43,"word":"focus"}}}
+{"seq":53,"atMs":1792854038960,"event":{"type":"CandidateStreamed","node":5,"candidate":{"candidateId":44,"word":"scarcity"}}}
+{"seq":54,"atMs":1792854039070,"event":{"type":"CandidateStreamed","node":5,"candidate":{"candidateId":45,"word":"transformer"}}}
+{"seq":55,"atMs":1792854039180,"event":{"type":"CandidateStreamed","node":5,"candidate":{"candidateId":46,"word":"mindfulness"}}}
+{"seq":56,"atMs":1792854039290,"event":{"type":"CandidateStreamed","node":5,"candidate":{"candidateId":47,"word":"economy"}}}
+{"seq":57,"atMs":1792854039400,"event":{"type":"CandidateStreamed","node":5,"candidate":{"candidateId":48,"word":"distraction"}}}
+{"seq":58,"atMs":1792854039420,"event":{"type":"BranchesOffered","node":5,"candidates":[{"candidateId":43,"word":"focus"},{"candidateId":44,"word":"scarcity"},{"candidateId":45,"word":"transformer"},{"candidateId":46,"word":"mindfulness"},{"candidateId":47,"word":"economy"},{"candidateId":48,"word":"distraction"}]}}
+{"seq":59,"atMs":1792854040320,"event":{"type":"EntryWritten","entry":{"entryId":4,"node":5,"relation":"Attention filters information","explanation":"When information is abundant, attention becomes the scarce resource that decides what is processed at all.","cites":[]}}}
+{"seq":60,"atMs":1792854042920,"event":{"type":"SourceFound","source":{"sourceId":4,"node":5,"kind":"pdf","title":"Attention Is All You Need","site":"arXiv","url":"https://arxiv.org/pdf/1706.03762","thumbnailUrl":null,"csl":{"type":"article","title":"Attention Is All You Need","author":[{"family":"Vaswani","given":"Ashish"},{"family":"Shazeer","given":"Noam"},{"family":"Parmar","given":"Niki"}],"issued":{"date-parts":[[2017]]},"number":"arXiv:1706.03762","publisher":"arXiv","URL":"https://arxiv.org/abs/1706.03762"}}}}
+{"seq":61,"atMs":1792854043120,"event":{"type":"EntryRevised","entry":{"entryId":4,"node":5,"relation":"Attention filters information","explanation":"When information is abundant, attention becomes the scarce resource that decides what is processed at all.","cites":[4]}}}
+{"seq":62,"atMs":1792854049320,"event":{"type":"NodeChosen","node":6,"parent":5,"word":"flow","origin":"insert","fromCandidate":null}}
+{"seq":63,"atMs":1792854049670,"event":{"type":"CandidateStreamed","node":6,"candidate":{"candidateId":49,"word":"challenge"}}}
+{"seq":64,"atMs":1792854049780,"event":{"type":"CandidateStreamed","node":6,"candidate":{"candidateId":50,"word":"immersion"}}}
+{"seq":65,"atMs":1792854049890,"event":{"type":"CandidateStreamed","node":6,"candidate":{"candidateId":51,"word":"rhythm"}}}
+{"seq":66,"atMs":1792854050000,"event":{"type":"CandidateStreamed","node":6,"candidate":{"candidateId":52,"word":"timelessness"}}}
+{"seq":67,"atMs":1792854050110,"event":{"type":"CandidateStreamed","node":6,"candidate":{"candidateId":53,"word":"mastery"}}}
+{"seq":68,"atMs":1792854050220,"event":{"type":"CandidateStreamed","node":6,"candidate":{"candidateId":54,"word":"river"}}}
+{"seq":69,"atMs":1792854050240,"event":{"type":"BranchesOffered","node":6,"candidates":[{"candidateId":49,"word":"challenge"},{"candidateId":50,"word":"immersion"},{"candidateId":51,"word":"rhythm"},{"candidateId":52,"word":"timelessness"},{"candidateId":53,"word":"mastery"},{"candidateId":54,"word":"river"}]}}
+{"seq":70,"atMs":1792854051240,"event":{"type":"EntryWritten","entry":{"entryId":5,"node":6,"relation":"Flow is attention fully absorbed","explanation":"Flow describes total absorption in a task whose challenge matches skill; attention stops being divided.","cites":[]}}}
+{"seq":71,"atMs":1792854052940,"event":{"type":"SourceFound","source":{"sourceId":5,"node":6,"kind":"webPage","title":"Flow (psychology)","site":"Wikipedia","url":"https://en.wikipedia.org/wiki/Flow_(psychology)","thumbnailUrl":null,"csl":{"type":"entry-encyclopedia","title":"Flow (psychology)","container-title":"Wikipedia","URL":"https://en.wikipedia.org/wiki/Flow_(psychology)"}}}}
+{"seq":72,"atMs":1792854053140,"event":{"type":"EntryRevised","entry":{"entryId":5,"node":6,"relation":"Flow is attention fully absorbed","explanation":"Flow describes total absorption in a task whose challenge matches skill; attention stops being divided.","cites":[5]}}}
+{"seq":73,"atMs":1792854056140,"event":{"type":"EntryPromoted","entryId":1,"levels":2}}
+{"seq":74,"atMs":1792854057340,"event":{"type":"EntryPromoted","entryId":4,"levels":1}}
+{"seq":75,"atMs":1792854058240,"event":{"type":"EntryPromoted","entryId":5,"levels":2}}
+{"seq":76,"atMs":1792854059740,"event":{"type":"EntryStruck","entryId":3}}
+{"seq":77,"atMs":1792854063740,"event":{"type":"WrappedUp"}}
+{"seq":78,"atMs":1792854070240,"event":{"type":"OutputsReady","outputs":{"decisionTree":"```mermaid\nflowchart TD\n  n1[entropy] --> n2[information]\n  n2 --> n3[noise]\n  n3 --> n4[creativity]\n  n2 -. revisited .-> n5[attention]\n  n5 --> n6[flow]\n```","draft":"# Draft: from entropy to flow\n\n1. **Entropy measures information.** Shannon borrowed the word entropy for the average surprise of a message [@src1; @src2].\n2. **Noise is information you did not ask for.** Maximal entropy looks like pure noise [@src3].\n3. ~~**Noise as a source of new ideas.** Random perturbation can knock a search out of a rut.~~\n4. **Attention filters information.** When information is abundant, attention becomes the scarce resource [@src4].\n5. **Flow is attention fully absorbed.** Challenge matches skill and attention stops being divided [@src5].","final":"# From entropy to flow\n\n## Information\n\nEntropy, in Shannon's sense, is the average surprise of a message [@src2]. The less predictable a source, the more information each symbol carries [@src1].\n\n## Attention\n\nAbundant information makes attention the scarce resource [@src4]. Flow is the state in which that attention is fully absorbed by a well-matched challenge [@src5]."}}}

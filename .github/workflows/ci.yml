@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: haskell-actions/setup@v2
+        id: setup
+        with:
+          ghc-version: '9.10.3'
+          cabal-version: 'latest'
+
+      - name: Resolve dependencies
+        run: |
+          cabal update
+          cabal build all --dry-run
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.setup.outputs.cabal-store }}
+          key: cabal-${{ runner.os }}-ghc-9.10.3-${{ hashFiles('backend/dist-newstyle/cache/plan.json') }}
+          restore-keys: cabal-${{ runner.os }}-ghc-9.10.3-
+
+      - run: cabal build all
+      - run: cabal test all --test-show-details=direct
+
+      - name: Generated TypeScript is up to date
+        run: |
+          cabal run -v0 drift-gen-ts -- ../frontend/src/protocol/generated.ts
+          git diff --exit-code -- ../frontend/src/protocol/generated.ts
+
+  frontend:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Fixtures are up to date
+        run: |
+          pnpm fixtures
+          git diff --exit-code -- ../protocol/fixtures
+
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build

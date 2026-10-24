@@ -59,12 +59,12 @@ The contract between frontend and backend is the single most important artifact 
 
 | Command | Meaning |
 | --- | --- |
-| `StartFromCloud lang` / `StartFromWord word` | Begin a session from the random cloud, or from a typed starting word |
+| `StartWithWord word` | Start from a typed word instead of picking from the cloud (a new session spawns its cloud on creation) |
 | `Pick candidateId` | Choose one of the words currently on offer |
 | `InsertWord word` | Insert the user's own single word at the current position |
 | `Backtrack nodeId` | Return to an earlier node and grow from there |
 | `SetDivergence d` | Move the divergence slider (0.0 to 1.0) |
-| `Place objectId pos angle` | Record where the client laid out a node or source object, so spatial memory survives reloads |
+| `PlaceNode node pos angle` / `PlaceSource sourceId pos angle` | Record where the client laid out a node or source object, so spatial memory survives reloads |
 | `Promote entryId levels` / `Strike entryId` / `Restore entryId` | Sidebar curation |
 | `WrapUp` | Finish and produce the three outputs |
 
@@ -76,11 +76,12 @@ The contract between frontend and backend is the single most important artifact 
 | `CandidateStreamed`, `BranchesOffered` | Branch pipeline (streamed word by word, then sealed) |
 | `SourceFound` | Source pipeline, whenever a source arrives |
 | `EntryWritten`, `EntryRevised` | Writing pipeline |
-| `EntryPromoted`, `EntryStruck`, `EntryRestored`, `ObjectPlaced` | Session actor, immediately |
-| `OutputsReady` | Output assembly after wrap-up |
-| `Rejected reason` | Session actor, when a command is invalid |
+| `EntryPromoted`, `EntryStruck`, `EntryRestored`, `NodePlaced`, `SourcePlaced` | Session actor, immediately |
+| `WrappedUp` / `OutputsReady` | Session actor on wrap-up / output assembly when done |
 
-**Fixtures.** `protocol/fixtures/*.jsonl` holds scripted event streams: a whole exploration, a session with many sources, a long tree for stress tests. The frontend mock transport replays them, and backend golden tests check against them.
+Events travel inside a server message: `Events [Stamped]`, where `Stamped` adds the sequence number and time. On connect the server sends the whole log as one `Events` message. An invalid command gets `Rejected req reason` instead, echoing the client's request id. The authoritative definitions are in `backend/src/Drift/Protocol.hs`.
+
+**Fixtures.** `protocol/fixtures/*.jsonl` holds scripted event streams: a whole exploration, and a session with many sources and recorded placements. They are generated from typed scripts in `frontend/scripts/make-fixtures.ts`. The frontend mock transport replays them, and the backend test suite decodes every line against the Haskell types. Large stress scenes are generated synthetically in the playground instead.
 
 ## 4. Backend (Haskell)
 
@@ -116,7 +117,8 @@ data Event
   | EntryPromoted   EntryId Int
   | EntryStruck     EntryId
   | EntryRestored   EntryId
-  | ObjectPlaced    ObjectId Vec2 Angle
+  | NodePlaced      NodeId Vec2 Angle
+  | SourcePlaced    SourceId Vec2 Angle
   | WrappedUp
   -- ...
 
@@ -283,7 +285,7 @@ engine/      renderer, camera, motion system, input, culling, LOD
 chrome/      React: sidebar, divergence slider, word input, wrap-up, outputs
 ```
 
-- **The domain is owned by the server, and space is owned by the client.** The store mirrors server state exactly. Positions and angles are computed by the client's layout and sent back as `Place` commands, so they persist across reloads (spatial memory is a product requirement).
+- **The domain is owned by the server, and space is owned by the client.** The store mirrors server state exactly. Positions and angles are computed by the client's layout and sent back as `PlaceNode` / `PlaceSource` commands, so they persist across reloads (spatial memory is a product requirement).
 - **The engine knows nothing about words.** It provides a camera, a motion system, input, and drawable primitives. The `desk` layer builds the Driftwords scene on top of it. This boundary lets the engine and the desk content be built at the same time.
 
 ### 5.3 Rendering engine
@@ -441,7 +443,7 @@ M4 can start on day one with placeholder primitives and switch to the M3 engine 
 
 **M4: Word tree on the desk.** *FE-Desk. Depends on M0, and on M3 for final visuals.*
 - Store reducer for every event; drifting word cloud; selection (dim others, enlarge, camera glide).
-- Branch ring with orbit, streamed candidates growing in one by one, backtracking, single-word insertion, divergence slider wiring, and `Place` commands.
+- Branch ring with orbit, streamed candidates growing in one by one, backtracking, single-word insertion, divergence slider wiring, and `PlaceNode` commands.
 - *Done when:* a full exploration plays from fixtures in the browser with the intended feel, without the backend.
 
 **M5: End-to-end walking skeleton.** *BE-Core, BE-AI, FE-Desk. Depends on M1, M2, M4.*
