@@ -5,8 +5,13 @@ The three wrap-up outputs: decision tree, draft and final (TECH_ROADMAP.md secti
 | Module | Output | Status |
 | --- | --- | --- |
 | `Drift.Output.Tree` | Decision tree as a fenced Mermaid block (forks and backtracks) | done; matches the `exploration.jsonl` fixture exactly |
-| `Drift.Output.Draft` | Draft: every entry in order, struck ones crossed out, with the full reference list | next |
+| `Drift.Output.Cite` | Citations and reference lists in APA, rendered by citeproc from each source's CSL-JSON | done |
+| `Drift.Output.Draft` | Draft: every entry in order, struck ones crossed out and kept, with the full reference list | done |
 | `Drift.Output.Final` | Final: high-priority entries only, references recomputed from what the text cites | next |
+
+`data/apa.csl` is the APA 7th edition style from [citation-style-language/styles](https://github.com/citation-style-language/styles), unchanged and under its own license (CC BY-SA 3.0, stated inside the file). citeproc embeds the locale files itself. The style is compiled into the library, so nothing is read from disk at run time.
+
+Text that came from a model or the web is escaped before it goes into a document, and a source that was not retrieved is never cited (invariant 6).
 
 It is a separate cabal package so it does not edit `drift.cabal` or `test/Main.hs`; the module names follow the layout in TECH_ROADMAP.md section 6, so folding them into the main package later is a file move.
 

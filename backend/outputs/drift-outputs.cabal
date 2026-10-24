@@ -3,6 +3,7 @@ name:               drift-outputs
 version:            0.1.0.0
 synopsis:           Wrap-up outputs for Driftwords: decision tree, draft and final
 build-type:         Simple
+extra-source-files: data/apa.csl
 
 -- A separate package on purpose, like drift-sources: M8 starts without editing
 -- drift.cabal or the test entry point that other tracks are changing. The
@@ -23,11 +24,16 @@ library
   import:           shared
   hs-source-dirs:   src
   exposed-modules:
+    Drift.Output.Cite
+    Drift.Output.Draft
     Drift.Output.Tree
   build-depends:
+    , aeson       >=2.2  && <2.4
     , base        >=4.20 && <5
+    , citeproc    >=0.14 && <0.15
     , containers  >=0.6  && <0.8
     , drift
+    , file-embed  >=0.0.15 && <0.1
     , text        >=2.0  && <2.2
 
 test-suite outputs-test
@@ -36,12 +42,16 @@ test-suite outputs-test
   hs-source-dirs:   test
   main-is:          Main.hs
   other-modules:
+    CiteSpec
+    DraftSpec
     TreeSpec
   ghc-options:      -threaded
   build-depends:
     , aeson
     , base
     , bytestring
+    , citeproc
+    , containers
     , drift
     , drift-outputs
     , hspec          >=2.11 && <2.12
