@@ -5,6 +5,8 @@ module BranchesSpec (spec) where
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
+import Control.Monad (forM_)
+import Drift.Domain.Word (cap, wordKey)
 import Drift.Pipeline.Branches
 import Test.Hspec
 import Test.QuickCheck (property)
@@ -33,14 +35,20 @@ spec = do
       normalizeWord "Straße" `shouldBe` "strasse"
 
     it "removes normalized duplicates, chosen words, and exhausted repeats" $ do
-      let context = BranchContext "origin" ["root", "origin"] 0.75 (Set.fromList ["APPLE"]) (Map.fromList [("BANANA", repeatCap 0.75)]) 4
-      filterCandidates context [" Apple ", "pear", "PEAR", "banana", "plum"] `shouldBe` ["pear", "plum"]
-      filterCandidates context [" Pear ", "pear"] `shouldBe` ["Pear"]
+      let branchContext = BranchContext "origin" ["root", "origin"] 0.75 (Set.fromList ["APPLE"]) (Map.fromList [("BANANA", repeatCap 0.75)]) 4
+      filterCandidates branchContext [" Apple ", "pear", "PEAR", "banana", "plum"] `shouldBe` ["pear", "plum"]
+      filterCandidates branchContext [" Pear ", "pear"] `shouldBe` ["Pear"]
 
     it "returns words as the model wrote them, keeping the first spelling of a key" $ do
       let ctx = BranchContext "space" ["space"] 0.5 Set.empty Map.empty 4
       filterCandidates ctx ["Apollo", "apollo", "DNA"] `shouldBe` ["Apollo", "DNA"]
       filterCandidates ctx ["Straße", "STRASSE"] `shouldBe` ["Straße"]
+
+    it "agrees with the session engine on word identity and the repeat cap" $ do
+      -- Characters whose NFKC and case folding interact (j with caron, iota with dialytika and tonos).
+      forM_ ["\x01F0", "\x0390", "Straße", "  Kｅｙ  "] $ \w -> normalizeWord w `shouldBe` wordKey w
+      map repeatCap [0, 0.3, 0.5, 0.7, 1] `shouldBe` [3, 3, 2, 2, 1]
+      map repeatCap [0, 0.3, 0.5, 0.7, 1] `shouldBe` map cap [0, 0.3, 0.5, 0.7, 1]
 
     it "uses a repeat cap that never increases with divergence" $
       property $ \rawA rawB ->

@@ -19,14 +19,14 @@ import Drift.Domain.Types (Log (..), Session (..))
 import Drift.Protocol
 import Network.HTTP.Client
   ( Manager, Request (..), RequestBody (..), Response, defaultManagerSettings
-  , closeManager, httpLbs, newManager, parseRequest, responseBody, responseStatus )
+  , httpLbs, newManager, parseRequest, responseBody, responseStatus )
 import Network.HTTP.Types (statusCode)
 import Network.Socket
   ( Family (AF_INET), SocketType (Stream), SockAddr (SockAddrInet), bind
   , close, defaultProtocol, getSocketName, setSocketOption, socket
   , SocketOption (ReuseAddr) )
 import Network.WebSockets
-  ( Connection, defaultConnectionOptions, receiveData, runClient, sendTextData )
+  ( Connection, receiveData, runClient, sendTextData )
 import System.Directory
   ( createDirectory, doesFileExist, getCurrentDirectory, getTemporaryDirectory
   , removeFile, removePathForcibly )
@@ -35,7 +35,7 @@ import System.FilePath ((</>), isAbsolute, takeDirectory)
 import System.IO (IOMode (ReadWriteMode), hClose, openFile, openTempFile)
 import System.Info (os)
 import System.Process
-  ( CreateProcess (..), ProcessHandle, StdStream (UseHandle), createProcess
+  ( CreateProcess (..), ProcessHandle, StdStream (Inherit, NoStream, UseHandle), createProcess
   , getProcessExitCode, proc, readCreateProcessWithExitCode, terminateProcess
   , waitForProcess )
 import System.Exit (ExitCode (..))
@@ -84,10 +84,10 @@ spec = describe "M1 server process restart" $
         startWordSession <- createSession port "zh"
         withSession port (sessionId startWordSession) $ \connection -> do
           _ <- receiveEvents connection
-          submitCommand connection 500 (StartWithWord "独立")
-          events <- collectUntil connection (\case NodeChosen _ _ "独立" StartWord _ -> True; _ -> False)
+          submitCommand connection 500 (StartWithWord "\x72EC\x7ACB")
+          events <- collectUntil connection (\case NodeChosen _ _ "\x72EC\x7ACB" StartWord _ -> True; _ -> False)
           events `shouldSatisfy` any (\stamped -> case eventOf stamped of
-            NodeChosen _ _ "独立" StartWord _ -> True
+            NodeChosen _ _ "\x72EC\x7ACB" StartWord _ -> True
             _ -> False)
           _ <- collectUntil connection isSeal
           pure ()
@@ -106,8 +106,10 @@ spec = describe "M1 server process restart" $
           let previouslyVisible = visibleCandidateIds restored
               priorNodeIds = chosenNodeIds restored
               current = latestSealedCandidates restored
-          current `shouldSatisfy` (not . null)
-          submitCommand connection 800 (Pick (candidateIdOf (head current)))
+          candidate <- case current of
+            first : _ -> pure first
+            [] -> expectationFailure "Expected a current branch candidate" >> fail "Missing branch candidate"
+          submitCommand connection 800 (Pick (candidateIdOf candidate))
           continuation <- collectUntil connection isSeal
           let continued = restored <> continuation
           assertContiguous continued
@@ -140,23 +142,20 @@ withServer executable port databasePath action =
 startServer :: FilePath -> Int -> FilePath -> IO ProcessHandle
 startServer executable port databasePath = do
   inherited <- getEnvironment
-  -- Point stdio at the null device rather than closing it (NoStream). On
-  -- POSIX a closed stdout lets the child's runtime reuse fd 1 for an internal
-  -- pipe, so the server's startup message corrupts its IO manager and it never
-  -- starts listening.
-  null' <- openFile nullDevice ReadWriteMode
   let overrides = [("DRIFT_PORT", show port), ("DRIFT_DB_PATH", databasePath)]
       environment = overrides <> filter ((`notElem` map fst overrides) . fst) inherited
-      process = (proc executable [])
-        { env = Just environment
-        , std_in = UseHandle null'
-        , std_out = UseHandle null'
-        , std_err = UseHandle null'
-        }
-  (_, _, _, handle) <- createProcess process
-  pure handle
+      process = (proc executable []) {env = Just environment}
+  if os == "mingw32"
+    then processHandle <$> createProcess process
+      { std_in = NoStream, std_out = Inherit, std_err = Inherit }
+    else do
+      -- Keep all three descriptors open on POSIX. Closing stdout lets the
+      -- runtime reuse fd 1 for an internal pipe, which breaks server startup.
+      null' <- openFile "/dev/null" ReadWriteMode
+      processHandle <$> createProcess process
+        { std_in = UseHandle null', std_out = UseHandle null', std_err = UseHandle null' }
   where
-    nullDevice = if os == "mingw32" then "NUL" else "/dev/null"
+    processHandle (_, _, _, handle) = handle
 
 stopServer :: ProcessHandle -> IO ()
 stopServer handle = do
@@ -197,7 +196,8 @@ findPackageRoot path = do
             else findPackageRoot parent
 
 waitForHealth :: Int -> IO ()
-waitForHealth port = bracket (newManager defaultManagerSettings) closeManager $ \manager -> do
+waitForHealth port = do
+  manager <- newManager defaultManagerSettings
   result <- timeout 30000000 (go manager)
   case result of
     Nothing -> fail "drift-server did not become healthy within 30 seconds"
@@ -213,7 +213,8 @@ waitForHealth port = bracket (newManager defaultManagerSettings) closeManager $ 
         _ -> threadDelay 100000 >> go manager
 
 createSession :: Int -> Text -> IO CreateSessionResponse
-createSession port language = bracket (newManager defaultManagerSettings) closeManager $ \manager -> do
+createSession port language = do
+  manager <- newManager defaultManagerSettings
   body <- httpRequest manager port "POST" "/api/sessions"
     (LazyByteString.fromStrict (TextEncoding.encodeUtf8 ("{\"lang\":\"" <> language <> "\"}")))
   case eitherDecode (responseBody body) of
@@ -251,7 +252,7 @@ reservePort = bracket (socket AF_INET Stream defaultProtocol) close $ \sock -> d
     address -> fail ("Unexpected local socket address: " <> show address)
 
 withSession :: Int -> Text -> (Connection -> IO a) -> IO a
-withSession port identifier = runClient "127.0.0.1" (fromIntegral port)
+withSession port identifier = runClient "127.0.0.1" port
   ("/api/sessions/" <> Text.unpack identifier <> "/ws")
 
 receiveEvents :: Connection -> IO [Stamped]

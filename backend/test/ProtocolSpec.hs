@@ -38,8 +38,13 @@ spec = do
     it "round-trips client messages" $
       roundTrips (ClientMsg {req = 7, command = PlaceNode {node = NodeId 2, pos = Vec2 1.5 (-3), angle = 0.2}})
 
-    it "round-trips server messages" $
+    it "round-trips server messages" $ do
       roundTrips (Rejected {req = 7, reason = "unknown candidate"})
+      roundTrips (Diagnostic {level = LevelWarning, message = "retrying"})
+
+    it "encodes diagnostics with plain level names" $
+      encode (Diagnostic {level = LevelError, message = "model down"})
+        `shouldBe` "{\"type\":\"Diagnostic\",\"level\":\"error\",\"message\":\"model down\"}"
 
   fixtures <- runIO (sort . filter (".jsonl" `isSuffixOf`) <$> listDirectory fixturesDir)
 

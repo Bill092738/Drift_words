@@ -3,6 +3,7 @@
 module Drift.Protocol.Options
   ( wireOptions
   , enumOptions
+  , prefixedEnumOptions
   ) where
 
 import Data.Aeson.TH (Options (..), SumEncoding (..), defaultOptions)
@@ -26,3 +27,10 @@ wireOptions =
 -- | Enum-like types encode as camelCase strings (@"en"@, @"webPage"@, ...).
 enumOptions :: Options
 enumOptions = wireOptions {allNullaryToStringTag = True, constructorTagModifier = lowerFirst}
+
+-- | Like 'enumOptions' for constructors that carry a prefix to avoid name
+-- clashes: @prefixedEnumOptions "Level"@ encodes @LevelError@ as @"error"@.
+prefixedEnumOptions :: String -> Options
+prefixedEnumOptions prefix = enumOptions {constructorTagModifier = lowerFirst . dropPrefix}
+  where
+    dropPrefix tag = if take (length prefix) tag == prefix then drop (length prefix) tag else tag

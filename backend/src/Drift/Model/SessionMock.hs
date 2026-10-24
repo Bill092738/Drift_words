@@ -13,10 +13,10 @@ type BranchGenerator = Session -> NodeId -> IO [Text]
 
 mockCloud :: Lang -> [Text]
 mockCloud En = ["river", "light", "forest", "memory", "orbit", "thread"]
-mockCloud Zh = ["河流", "光芒", "森林", "记忆", "轨道", "丝线"]
+mockCloud Zh = ["\x6CB3\x6D41", "\x5149\x8292", "\x68EE\x6797", "\x8BB0\x5FC6", "\x8F68\x9053", "\x4E1D\x7EBF"]
 
 mockBranches :: BranchGenerator
 mockBranches session (NodeId node) = pure $
   map (<> Text.pack (show node)) $ case session.sessionLanguage of
-    Just Zh -> ["涟漪", "桥梁", "星辰", "回声", "种子", "远方"]
+    Just Zh -> ["\x6D9F\x6F2A", "\x6865\x6881", "\x661F\x8FB0", "\x56DE\x58F0", "\x79CD\x5B50", "\x8FDC\x65B9"]
     _ -> ["ripple", "bridge", "starlight", "echo", "seed", "horizon"]

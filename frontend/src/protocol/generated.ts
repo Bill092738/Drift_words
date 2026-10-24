@@ -238,7 +238,9 @@ export interface IStamped {
   event: Event;
 }
 
-export type ServerMsg = IEvents | IRejected;
+export type DiagnosticLevel = "info" | "warning" | "error";
+
+export type ServerMsg = IEvents | IRejected | IDiagnostic;
 
 export interface IEvents {
   type: "Events";
@@ -249,4 +251,10 @@ export interface IRejected {
   type: "Rejected";
   req: number;
   reason: string;
+}
+
+export interface IDiagnostic {
+  type: "Diagnostic";
+  level: DiagnosticLevel;
+  message: string;
 }

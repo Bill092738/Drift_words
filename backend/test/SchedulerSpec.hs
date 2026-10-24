@@ -30,7 +30,9 @@ spec = describe "model scheduler" $ do
     takeMVar started
 
     let record label = modifyMVar_ order (pure . (<> [label]))
-    jobs <- forM [(P2, "p2"), (P1, "p1-a"), (P3, "p3"), (P1, "p1-b")] $ \(priority, label) ->
+        queuedJobs :: [(Priority, String)]
+        queuedJobs = [(P2, "p2"), (P1, "p1-a"), (P3, "p3"), (P1, "p1-b")]
+    jobs <- forM queuedJobs $ \(priority, label) ->
       submit scheduler priority (record label)
     putMVar gate ()
 
@@ -48,7 +50,7 @@ spec = describe "model scheduler" $ do
         `finally` putMVar interrupted ()
     takeMVar started
 
-    urgent <- submit scheduler P0 (pure "urgent")
+    urgent <- submit scheduler P0 (pure ("urgent" :: String))
 
     within (await urgent) `shouldReturn` Right "urgent"
     within (await low) `shouldReturn` Left JobCancelled

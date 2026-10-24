@@ -113,6 +113,12 @@ describe('MockServer', () => {
   });
 });
 
+describe('repeatCap', () => {
+  it('follows the backend curve 3 - floor(2d)', () => {
+    expect([0, 0.3, 0.5, 0.7, 1].map(repeatCap)).toEqual([3, 3, 2, 2, 1]);
+  });
+});
+
 describe('isSingleWord', () => {
   it('accepts one word of up to 40 characters', () => {
     expect(isSingleWord('serendipity')).toBe(true);

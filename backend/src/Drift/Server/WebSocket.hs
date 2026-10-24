@@ -20,11 +20,11 @@ import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Text (Text)
 import qualified Data.Text.Encoding as TextEncoding
 import Drift.Domain.Types (SessionId (..))
-import Drift.Protocol (ClientMsg (..), ServerMsg (..))
+import Drift.Protocol (ServerMsg (..))
 import Drift.Server.SessionActor
   ( Manager, Subscription, receive, submit, subscribeSession, unsubscribe )
 import Network.WebSockets
-  ( DataMessage (..), PendingConnection, ServerApp, acceptRequest, pendingRequest
+  ( DataMessage (..), ServerApp, acceptRequest, pendingRequest
   , receiveDataMessage, rejectRequest, requestPath, sendCloseCode, sendTextData
   )
 import qualified Network.WebSockets as WebSockets

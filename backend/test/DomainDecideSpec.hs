@@ -4,7 +4,6 @@ module DomainDecideSpec (spec) where
 
 import Control.Monad (forM_)
 import Data.Either (isLeft)
-import Data.List (foldl')
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as Text
@@ -38,11 +37,11 @@ rejected result = case result of
 spec :: Spec
 spec = do
   describe "decide: words and picks" $ do
-    forM_ [" ocean ", "\t森林\n", "Straße"] $ \input ->
+    forM_ [" ocean ", "\t\x68EE\x6797\n", "Straße"] $ \input ->
       it ("accepts one trimmed token: " <> show input) $
         decide emptySession (StartWithWord input) `shouldBe`
           Right [NodeChosen (NodeId 1) Nothing (Text.strip input) StartWord Nothing]
-    forM_ ["", " \t\n", "two words", "two\twords", "两 个", "a\x2003\&b"] $ \input ->
+    forM_ ["", " \t\n", "two words", "two\twords", "\x4E24 \x4E2A", "a\x2003\&b"] $ \input ->
       it ("rejects empty or multiple-token input: " <> show input) $ do
         rejected (decide emptySession (StartWithWord input))
         rejected (decide root (InsertWord input))
@@ -52,8 +51,8 @@ spec = do
     it "requires focus for insertion" $
       rejected (decide emptySession (InsertWord "child"))
     it "inserts with the next node ID, focus parent and Insert origin" $
-      decide root (InsertWord " 森林 ") `shouldBe`
-        Right [NodeChosen (NodeId 2) (Just (NodeId 1)) "森林" Insert Nothing]
+      decide root (InsertWord " \x68EE\x6797 ") `shouldBe`
+        Right [NodeChosen (NodeId 2) (Just (NodeId 1)) "\x68EE\x6797" Insert Nothing]
     it "rejects visited identity under NFKC and case folding" $ do
       let s = live [NodeChosen (NodeId 1) Nothing "Straße" StartWord Nothing]
       rejected (decide s (InsertWord "ＳＴＲＡＳＳＥ"))
@@ -76,15 +75,21 @@ spec = do
       decide (root {sessionNextNodeId = NodeId 40}) (InsertWord "child") `shouldBe`
         Right [NodeChosen (NodeId 40) (Just (NodeId 1)) "child" Insert Nothing]
   describe "decide: backtrack and divergence" $ do
-    it "revisits an existing node and clears old pickable candidates on apply" $ do
+    it "revisits an earlier node and clears old pickable candidates on apply" $ do
       let c = candidate 4 "child"
-          s = apply root (BranchesOffered (NodeId 1) [c])
+          sibling = candidate 5 "sibling"
+          offered = apply root (BranchesOffered (NodeId 1) [c, sibling])
+          s = apply offered (NodeChosen (NodeId 2) (Just (NodeId 1)) "child" Branch (Just (CandidateId 4)))
       decide s (Backtrack (NodeId 1)) `shouldBe` Right [NodeRevisited (NodeId 1)]
       let moved = apply s (NodeRevisited (NodeId 1))
       moved.sessionCandidates `shouldBe` Map.empty
-      Map.lookup (NodeId 1) moved.sessionRings `shouldBe` Just [c]
-      rejected (decide moved (Pick (CandidateId 4)))
+      Map.lookup (NodeId 1) moved.sessionRings `shouldBe` Just [c, sibling]
+      rejected (decide moved (Pick (CandidateId 5)))
       rejected (decide s (Backtrack (NodeId 99)))
+    it "rejects a backtrack to the current focus once its ring is pickable (no rerolls)" $ do
+      rejected (decide (apply root (BranchesOffered (NodeId 1) [candidate 4 "child"])) (Backtrack (NodeId 1)))
+      -- With nothing pickable (still generating, or the ring was lost) it recovers the ring.
+      decide root (Backtrack (NodeId 1)) `shouldBe` Right [NodeRevisited (NodeId 1)]
     forM_ [0, 0.25, 0.5, 1] $ \d ->
       it ("accepts finite divergence " <> show d) $
         decide root (SetDivergence d) `shouldBe` Right [DivergenceSet d]
@@ -127,6 +132,9 @@ spec = do
       decide curated (Strike (EntryId 1)) `shouldBe` Right [EntryStruck (EntryId 1)]
       decide (apply curated (EntryStruck (EntryId 1))) (Restore (EntryId 1)) `shouldBe`
         Right [EntryRestored (EntryId 1)]
+      -- Shared rules from Drift.Domain.Entries: no double strike, no restore of a live entry.
+      rejected (decide (apply curated (EntryStruck (EntryId 1))) (Strike (EntryId 1)))
+      rejected (decide curated (Restore (EntryId 1)))
   describe "decide: wrap-up" $ do
     it "emits one wrap event and is idempotent thereafter" $ do
       decide root WrapUp `shouldBe` Right [WrappedUp]
@@ -139,11 +147,11 @@ spec = do
       rejected (decide s (PlaceNode (NodeId 99) (Vec2 0 0) 0))
   describe "offerBranches" $ do
     it "admits in order, streams each candidate once, then seals once" $ do
-      let cs = [candidate 9 "river", candidate 2 "森林"]
+      let cs = [candidate 9 "river", candidate 2 "\x68EE\x6797"]
           events = map (CandidateStreamed (NodeId 1)) cs <> [BranchesOffered (NodeId 1) cs]
       offerBranches root (NodeId 1) cs `shouldBe` Right events
       let s = foldl' apply root events
-      s.sessionAppearances `shouldBe` Map.fromList [("river", 1), ("森林", 1)]
+      s.sessionAppearances `shouldBe` Map.fromList [("river", 1), ("\x68EE\x6797", 1)]
       s.sessionSeenCandidates `shouldBe` Set.fromList [CandidateId 9, CandidateId 2]
       Map.lookup (NodeId 1) s.sessionStreamed `shouldBe` Just cs
       Map.lookup (NodeId 1) s.sessionRings `shouldBe` Just cs
@@ -161,9 +169,9 @@ spec = do
         rejected (offerBranches s (NodeId 1) [candidate 7 "unrelated"])
     it "filters normalized visited and batch duplicates, preserving first occurrence" $ do
       let a = candidate 2 "Straße"
-          b = candidate 5 "森林"
+          b = candidate 5 "\x68EE\x6797"
       offerBranches root (NodeId 1)
-        [candidate 1 "ＲＯＯＴ", a, candidate 3 "ＳＴＲＡＳＳＥ", b, candidate 6 "森林"]
+        [candidate 1 "ＲＯＯＴ", a, candidate 3 "ＳＴＲＡＳＳＥ", b, candidate 6 "\x68EE\x6797"]
         `shouldBe` Right [CandidateStreamed (NodeId 1) a, CandidateStreamed (NodeId 1) b,
                           BranchesOffered (NodeId 1) [a, b]]
     it "counts normalized fresh-ID appearances and filters exactly at the cap" $ do

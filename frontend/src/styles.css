@@ -102,6 +102,49 @@ select {
   cursor: pointer;
 }
 
+.dev-diagnostics {
+  position: fixed;
+  top: 68px;
+  left: 16px;
+  width: min(460px, calc(100vw - 32px));
+  max-height: min(360px, calc(100vh - 84px));
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-lifted);
+  font: 12px/1.45 ui-monospace, 'SF Mono', Menlo, monospace;
+  z-index: 10;
+}
+
+.dev-diagnostics header {
+  margin-bottom: 8px;
+  font-family: var(--font);
+  font-weight: 650;
+}
+
+.dev-diagnostics-empty,
+.dev-diagnostics-list {
+  margin: 0;
+}
+
+.dev-diagnostics-list {
+  padding-left: 24px;
+}
+
+.dev-diagnostics-list li + li {
+  margin-top: 6px;
+}
+
+.dev-diagnostics-list li[data-level='warning'] strong {
+  color: #b66a00;
+}
+
+.dev-diagnostics-list li[data-level='error'] strong {
+  color: #c73333;
+}
+
 /* M0 event log view (?view=log) */
 
 .devlog {

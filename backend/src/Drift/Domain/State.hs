@@ -1,10 +1,10 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 
-module Drift.Domain.State (emptySession, apply, replay) where
+module Drift.Domain.State (emptySession, apply, applyStamped, replay) where
 
-import Data.List (foldl')
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import Drift.Domain.Entries (applyEntryEvent, emptyEntries)
 import Drift.Domain.Types
 import Drift.Domain.Word (wordKey)
 import Drift.Protocol
@@ -28,19 +28,27 @@ emptySession = Session
   , sessionNextCandidateId = CandidateId 1
   , sessionDivergence = 0.5
   , sessionSources = Map.empty
-  , sessionEntries = Map.empty
-  , sessionPriorities = Map.empty
-  , sessionStruck = Set.empty
+  , sessionEntries = emptyEntries
   , sessionNodePlacements = Map.empty
   , sessionSourcePlacements = Map.empty
   , sessionWrapped = False
   , sessionOutputs = Nothing
   }
 
+-- | Apply a recorded event at its sequence number. Entries remember the
+-- sequence number that first wrote them, so replay and the live actor use this.
+applyStamped :: Session -> Stamped -> Session
+applyStamped s stamped = applyAt stamped.seq s stamped.event
+
+-- | Apply an event without a sequence number (entries written here record 0).
+-- For pure tests and decisions that do not depend on entry order.
+apply :: Session -> Event -> Session
+apply = applyAt 0
+
 -- | Apply recorded facts, without command validation or new ID allocation.
 -- Explicit matching makes protocol additions produce an exhaustiveness warning.
-apply :: Session -> Event -> Session
-apply s = \case
+applyAt :: Int -> Session -> Event -> Session
+applyAt seqNo s = \case
   CloudSpawned language cs ->
     let counted = observeAll s cs
      in counted { sessionLanguage = Just language, sessionCloud = cs
@@ -71,19 +79,21 @@ apply s = \case
   NodeRevisited n -> moveFocus s n
   DivergenceSet d -> s {sessionDivergence = d}
   SourceFound src -> s {sessionSources = Map.insert src.sourceId src s.sessionSources}
-  EntryWritten entry -> s {sessionEntries = Map.insert entry.entryId entry s.sessionEntries}
-  EntryRevised entry -> s {sessionEntries = Map.insert entry.entryId entry s.sessionEntries}
-  EntryPromoted eid levels -> s {sessionPriorities = Map.insertWith (+) eid levels s.sessionPriorities}
-  EntryStruck eid -> s {sessionStruck = Set.insert eid s.sessionStruck}
-  EntryRestored eid -> s {sessionStruck = Set.delete eid s.sessionStruck}
+  event@(EntryWritten _) -> entries event
+  event@(EntryRevised _) -> entries event
+  event@(EntryPromoted _ _) -> entries event
+  event@(EntryStruck _) -> entries event
+  event@(EntryRestored _) -> entries event
   NodePlaced n pos angle -> s {sessionNodePlacements = Map.insert n (Placement pos angle) s.sessionNodePlacements}
   SourcePlaced sid pos angle -> s {sessionSourcePlacements = Map.insert sid (Placement pos angle) s.sessionSourcePlacements}
   WrappedUp -> s {sessionWrapped = True}
   OutputsReady outputs -> s {sessionOutputs = Just outputs}
+  where
+    entries event = s {sessionEntries = applyEntryEvent seqNo event s.sessionEntries}
 
 -- | Logs are newest-first; consume recorded events oldest-first exactly once.
 replay :: Log -> Session
-replay (Log events) = foldl' (\s stamped -> apply s stamped.event) emptySession (reverse events)
+replay (Log events) = foldl' applyStamped emptySession (reverse events)
 
 candidateMap :: [Candidate] -> Map.Map CandidateId Candidate
 candidateMap = Map.fromList . map (\c -> (c.candidateId, c))
