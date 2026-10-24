@@ -67,8 +67,8 @@ spec = describe "HTTP and WebSocket server" $ do
         sendTextData connection (encode (ClientMsg 7 (StartWithWord "root")))
         generated <- collectThroughSeal connection
         let committed = concatMap eventsOf generated
-            eventKinds = map event committed
-            sequences = map seq committed
+            eventKinds = [value | Stamped _ _ value <- committed]
+            sequences = [number | Stamped number _ _ <- committed]
         length committed `shouldSatisfy` (>= 4)
         sequences `shouldBe` [2 .. fromIntegral (length committed + 1)]
         eventKinds `shouldSatisfy` any isNodeChosen
