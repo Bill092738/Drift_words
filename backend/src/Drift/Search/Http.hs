@@ -24,7 +24,6 @@ import Control.Concurrent.MVar (MVar, modifyMVar, newMVar)
 import Control.Exception (try)
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.CaseInsensitive as CI
-import Data.Char (isSpace)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.List (sortOn)
 import Data.Map.Strict (Map)
@@ -179,15 +178,21 @@ classify = \case
 
 -- | HTTP exceptions include the request URL or a quoted query string. Keep
 -- that diagnostic context, but hide API key values regardless of key casing.
+-- A quote only ends the shown string when it is not escaped; apostrophes,
+-- whitespace and escaped characters can all be part of the credential.
 redactApiKeys :: Text -> Text
 redactApiKeys input
   | T.toCaseFold (T.take 8 input) == "api_key=" =
-      let (_, rest) = T.break valueEnd (T.drop 8 input)
-       in T.take 8 input <> "[REDACTED]" <> redactApiKeys rest
+      T.take 8 input <> "[REDACTED]" <> redactApiKeys (dropValue (T.drop 8 input))
   | Just (c, rest) <- T.uncons input = T.cons c (redactApiKeys rest)
   | otherwise = ""
   where
-    valueEnd c = c `elem` ['&', '#', '"', '\'', '\\'] || isSpace c
+    dropValue value = case T.uncons value of
+      Just ('\\', rest) -> dropValue (T.drop 1 rest)
+      Just (c, rest)
+        | c `elem` ['&', '#', '"'] -> value
+        | otherwise -> dropValue rest
+      Nothing -> ""
 
 -- | Adds a response to the cache. Expired entries are dropped on every
 -- insert, and if the cache is still over @limit@ the entries that expire

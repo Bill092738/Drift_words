@@ -16,6 +16,26 @@ spec = describe "Drift.Search.Http" $ do
         message `shouldSatisfy` T.isInfixOf "search=moon"
       other -> expectationFailure ("expected a diagnostic network error, got " <> show other)
 
+  mapM_
+    (\(name, key, suffix) ->
+      it ("redacts the complete API key containing " <> name) $ do
+        fetch <- newFetch defaultHttpConfig
+        result <- runFetch fetch (HttpRequest ("invalid://example.org/works?search=moon&ApI_KeY=" <> key <> suffix) [] [])
+        case result of
+          Left (Network message) -> do
+            message `shouldSatisfy` (not . T.isInfixOf "credential-tail")
+            message `shouldSatisfy` T.isInfixOf "example.org/works"
+            message `shouldSatisfy` T.isInfixOf "search=moon"
+            message `shouldSatisfy` T.isInfixOf "Invalid scheme"
+            if T.null suffix then pure () else message `shouldSatisfy` T.isInfixOf suffix
+          other -> expectationFailure ("expected a diagnostic network error, got " <> show other))
+    [ ("an apostrophe", "prefix'credential-tail", "&page=1")
+    , ("a backslash", "prefix\\credential-tail", "&page=1")
+    , ("a double quote", "prefix\"credential-tail", "&page=1")
+    , ("whitespace", "prefix credential-tail", "&page=1")
+    , ("an apostrophe at the end of the query", "prefix'credential-tail", "")
+    ]
+
   it "redacts API key names case-insensitively" $ do
     fetch <- newFetch defaultHttpConfig
     result <- runFetch fetch (HttpRequest "invalid://example.org/works?ApI_KeY=mixed-secret&search=moon" [] [])
