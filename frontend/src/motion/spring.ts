@@ -1,6 +1,6 @@
 // A damped spring for DOM chrome (sidebar, sheets). It uses the same
 // SpringConfig as the canvas engine, so chrome and desk motion feel alike.
-import type { SpringConfig } from '../../engine/api.ts';
+import type { SpringConfig } from '../engine/api.ts';
 
 const MAX_SUBSTEP = 1 / 240;
 
