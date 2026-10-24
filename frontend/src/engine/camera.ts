@@ -3,6 +3,12 @@ import { SpringImpl } from './spring.ts';
 
 export const MIN_ZOOM = 0.05;
 export const MAX_ZOOM = 8;
+/** Exponential decay rate of a fling, per second. Velocity halves about every 0.17 s. */
+export const FLING_FRICTION = 4;
+/** A fling ends when it is slower than this (pixels per second). */
+const FLING_REST_SPEED = 8;
+/** Wheel zoom eases with this spring; critically damped so it never overshoots. */
+const WHEEL_ZOOM: SpringConfig = { response: 0.22, dampingFraction: 1 };
 
 const clampZoom = (z: number): number => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
 
@@ -19,6 +25,14 @@ export class CameraImpl implements Camera {
   private readonly logZoom = new SpringImpl(0, springs.smooth);
   private width = 1;
   private height = 1;
+  /** Pan velocity in screen pixels per second while a fling is coasting. */
+  private flingX = 0;
+  private flingY = 0;
+  /** While a wheel zoom eases, this world point is kept under this screen point. */
+  private anchor: { world: Vec; screen: Vec } | null = null;
+
+  /** With reduced motion, glides and wheel zoom jump instead of animating, and there is no fling. */
+  reducedMotion = false;
 
   get center(): Vec {
     return { x: this.x.value, y: this.y.value };
@@ -40,7 +54,11 @@ export class CameraImpl implements Camera {
   }
 
   get animating(): boolean {
-    return !(this.x.settled && this.y.settled && this.logZoom.settled);
+    return (
+      !(this.x.settled && this.y.settled && this.logZoom.settled) ||
+      this.flingX !== 0 ||
+      this.flingY !== 0
+    );
   }
 
   /** Screen size in CSS pixels. */
@@ -50,12 +68,71 @@ export class CameraImpl implements Camera {
   }
 
   step(dt: number): void {
+    if (this.flingX !== 0 || this.flingY !== 0) {
+      const z = this.zoom;
+      this.snapTo(
+        this.x.value - (this.flingX * dt) / z,
+        this.y.value - (this.flingY * dt) / z,
+        this.logZoom.value,
+      );
+      const decay = Math.exp(-FLING_FRICTION * dt);
+      this.flingX *= decay;
+      this.flingY *= decay;
+      if (Math.hypot(this.flingX, this.flingY) < FLING_REST_SPEED) this.stopFling();
+      return;
+    }
     this.x.step(dt);
     this.y.step(dt);
     this.logZoom.step(dt);
+    if (this.anchor !== null) {
+      // Keep the world point under the pointer while the zoom eases.
+      const { world, screen } = this.anchor;
+      const z = this.zoom;
+      this.x.snap(world.x - (screen.x - this.width / 2) / z);
+      this.y.snap(world.y - (screen.y - this.height / 2) / z);
+      if (this.logZoom.settled) this.anchor = null;
+    }
+  }
+
+  /** Coasts after a drag release, with a screen-space velocity in pixels per second. */
+  fling(vx: number, vy: number): void {
+    if (this.reducedMotion) return;
+    this.anchor = null;
+    this.flingX = vx;
+    this.flingY = vy;
+  }
+
+  stopFling(): void {
+    this.flingX = 0;
+    this.flingY = 0;
+  }
+
+  /**
+   * Eases the zoom by `factor` around a screen point (the mouse wheel).
+   * Repeated calls accumulate on the target, so fast scrolling stays responsive.
+   */
+  zoomAtSmooth(at: Vec, factor: number): void {
+    if (this.reducedMotion) {
+      this.zoomAt(at, factor);
+      return;
+    }
+    this.stopFling();
+    this.x.snap(this.x.value);
+    this.y.snap(this.y.value);
+    // Chain onto the running wheel zoom's target; otherwise start from where the zoom is now.
+    const from = this.anchor !== null ? this.logZoom.target : this.logZoom.value;
+    const target = Math.log(clampZoom(Math.exp(from) * factor));
+    this.anchor = { world: this.screenToWorld(at), screen: at };
+    this.logZoom.to(target, WHEEL_ZOOM);
   }
 
   glideTo(center: Vec, zoom?: number, config: SpringConfig = springs.smooth): void {
+    this.stopFling();
+    this.anchor = null;
+    if (this.reducedMotion) {
+      this.snapTo(center.x, center.y, zoom === undefined ? this.logZoom.value : Math.log(clampZoom(zoom)));
+      return;
+    }
     this.x.to(center.x, config);
     this.y.to(center.y, config);
     if (zoom !== undefined) this.logZoom.to(Math.log(clampZoom(zoom)), config);
@@ -96,6 +173,7 @@ export class CameraImpl implements Camera {
   }
 
   private snapTo(x: number, y: number, logZoom: number): void {
+    this.anchor = null;
     this.x.snap(x);
     this.y.snap(y);
     this.logZoom.snap(logZoom);

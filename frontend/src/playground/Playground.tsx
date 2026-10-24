@@ -87,8 +87,9 @@ export function Playground() {
         if (acc < 0.2) return;
         acc = 0;
         const { center, zoom } = e.camera;
+        const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
         setStatus(
-          `${count} tiles · zoom ${zoom.toFixed(2)} · center (${center.x.toFixed(0)}, ${center.y.toFixed(0)})`,
+          `${count} tiles · zoom ${zoom.toFixed(2)} · center (${center.x.toFixed(0)}, ${center.y.toFixed(0)}) · reduced motion ${reduced ? 'on' : 'off'}`,
         );
       });
     });

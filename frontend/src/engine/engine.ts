@@ -105,29 +105,51 @@ export const createEngine: CreateEngine = async (host, options = {}) => {
     }
   };
 
+  const abort = new AbortController();
+
   const gestures = new GestureRecognizer({
     pan: (dx, dy) => camera.panBy(dx, dy),
     zoom: (factor, at) => camera.zoomAt(at, factor),
     tap: handleTap,
+    fling: (vx, vy) => camera.fling(vx, vy),
   });
+
+  // Reduced motion: follows the OS setting live.
+  const motionQuery =
+    typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
+  const applyReducedMotion = (): void => {
+    const reduced = motionQuery?.matches ?? false;
+    camera.reducedMotion = reduced;
+    if (reduced) camera.stopFling();
+    for (const ref of springList) {
+      const s = ref.deref();
+      if (s !== undefined) s.reducedMotion = reduced;
+    }
+  };
+  applyReducedMotion();
+  motionQuery?.addEventListener('change', applyReducedMotion, { signal: abort.signal });
 
   const local = (e: { clientX: number; clientY: number }): Vec => {
     const r = app.canvas.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   };
 
-  const abort = new AbortController();
   const listen = { signal: abort.signal };
   const canvas = app.canvas;
   canvas.addEventListener(
     'pointerdown',
     (e) => {
       canvas.setPointerCapture(e.pointerId);
+      camera.stopFling(); // touching the desk stops it coasting
       gestures.pointerDown(e.pointerId, local(e), e.timeStamp);
     },
     listen,
   );
-  canvas.addEventListener('pointermove', (e) => gestures.pointerMove(e.pointerId, local(e)), listen);
+  canvas.addEventListener(
+    'pointermove',
+    (e) => gestures.pointerMove(e.pointerId, local(e), e.timeStamp),
+    listen,
+  );
   canvas.addEventListener(
     'pointerup',
     (e) => gestures.pointerUp(e.pointerId, local(e), e.timeStamp),
@@ -138,7 +160,7 @@ export const createEngine: CreateEngine = async (host, options = {}) => {
     'wheel',
     (e) => {
       e.preventDefault();
-      camera.zoomAt(local(e), wheelZoomFactor(e.deltaY, e.deltaMode, e.ctrlKey));
+      camera.zoomAtSmooth(local(e), wheelZoomFactor(e.deltaY, e.deltaMode, e.ctrlKey));
     },
     { signal: abort.signal, passive: false },
   );
@@ -189,6 +211,7 @@ export const createEngine: CreateEngine = async (host, options = {}) => {
     },
     spring(initial: number, config?: SpringConfig): Spring {
       const s = new SpringImpl(initial, config);
+      s.reducedMotion = camera.reducedMotion;
       springList.add(new WeakRef(s));
       return s;
     },

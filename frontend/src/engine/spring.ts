@@ -17,6 +17,8 @@ export class SpringImpl implements Spring {
   target: number;
   private config: SpringConfig;
   private remainder = 0;
+  /** Reduced motion: twice as fast and never overshooting. */
+  reducedMotion = false;
 
   constructor(initial: number, config: SpringConfig = springs.smooth) {
     this.value = initial;
@@ -50,9 +52,13 @@ export class SpringImpl implements Spring {
       this.remainder = 0;
       return;
     }
-    const omega = (2 * Math.PI) / this.config.response;
+    const response = this.reducedMotion ? this.config.response / 2 : this.config.response;
+    const fraction = this.reducedMotion
+      ? Math.max(1, this.config.dampingFraction)
+      : this.config.dampingFraction;
+    const omega = (2 * Math.PI) / response;
     const stiffness = omega * omega;
-    const damping = 2 * this.config.dampingFraction * omega;
+    const damping = 2 * fraction * omega;
     this.remainder += dt;
     let steps = 0;
     while (this.remainder >= STEP && steps < MAX_STEPS) {

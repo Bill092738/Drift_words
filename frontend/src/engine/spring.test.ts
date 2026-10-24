@@ -50,6 +50,29 @@ describe('SpringImpl', () => {
     expect(s.value).toBe(-100);
   });
 
+  it('reduced motion removes overshoot and settles sooner', () => {
+    const normal = new SpringImpl(0, springs.bouncy);
+    const reduced = new SpringImpl(0, springs.bouncy);
+    reduced.reducedMotion = true;
+    normal.to(100);
+    reduced.to(100);
+    expect(Math.max(...run(reduced, 3))).toBeLessThanOrEqual(100.0001);
+    const settleTime = (s: SpringImpl): number => {
+      let t = 0;
+      while (!s.settled && t < 10) {
+        s.step(1 / 60);
+        t += 1 / 60;
+      }
+      return t;
+    };
+    const a = new SpringImpl(0, springs.smooth);
+    const b = new SpringImpl(0, springs.smooth);
+    b.reducedMotion = true;
+    a.to(100);
+    b.to(100);
+    expect(settleTime(b)).toBeLessThan(settleTime(a));
+  });
+
   it('snap jumps with zero velocity', () => {
     const s = new SpringImpl(0);
     s.to(100);
