@@ -26,7 +26,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Drift.Protocol (SourceKind (Paper))
 import Drift.Search.Http (Fetch (..), FetchError (..), HttpRequest (..), HttpResponse (..))
-import Drift.Search.Text (normalizeDoi, plainText)
+import Drift.Search.Text (doiUrl, normalizeDoi, plainText)
 import Drift.Search.Types (Hit (..), SourceDraft (..))
 import Drift.Sources.Csl (cslObject, openAlexType, splitPersonName)
 
@@ -77,7 +77,7 @@ workP rank = withObject "work" $ \o -> do
       abstractText = maybe "" abstractFromIndex inverted
   pure $ case (doi, cleanTitle) of
     (Just d, Just t) | not (T.null t) ->
-      let link = "https://doi.org/" <> d
+      let link = doiUrl d
           item =
             cslObject
               [ ("type", Just (toJSON (openAlexType (fromMaybe "article" workType))))

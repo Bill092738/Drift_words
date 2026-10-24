@@ -9,13 +9,16 @@ module Drift.Search.Text
   , tokens
   , stem
   , normalizeDoi
+  , doiUrl
   , isWebUrl
   ) where
 
 import Data.Char (chr, isAlphaNum, isHexDigit, isSpace)
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import Data.Text.Normalize (NormalizationMode (NFKC), normalize)
+import Network.HTTP.Types.URI (urlEncode)
 import Numeric (readHex)
 
 -- | Removes every @<...>@ tag. An unclosed @<@ keeps the rest as text.
@@ -93,6 +96,15 @@ normalizeDoi raw =
         else Nothing
   where
     prefixes = ["doi:", "https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "http://dx.doi.org/"]
+
+-- | The https link for a normalized DOI. A DOI may contain characters that
+-- mean something in a URL (@?@, @#@, @%@, @<@, @>@, @;@ and so on, common in
+-- older Wiley DOIs), so each part between slashes is percent-encoded, as the
+-- DOI Handbook asks. doi.org decodes them again.
+doiUrl :: Text -> Text
+doiUrl doi = "https://doi.org/" <> T.intercalate "/" (map encode (T.splitOn "/" doi))
+  where
+    encode = TE.decodeUtf8 . urlEncode False . TE.encodeUtf8
 
 -- | Only http(s) links go to the desk: a source opens in the browser when the
 -- user taps it, and the text came from the network.

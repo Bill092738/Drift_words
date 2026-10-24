@@ -10,13 +10,14 @@ module Drift.Sources.Doi
 import Data.Aeson (Value, decode)
 import Data.Text (Text)
 import Drift.Search.Http (Fetch (..), HttpRequest (..), HttpResponse (..))
+import Drift.Search.Text (doiUrl)
 import Drift.Sources.Csl (normalizeCrossrefCsl)
 
 -- | The cleaned CSL-JSON for a normalized DOI, or Nothing for any failure:
 -- the caller falls back to the metadata it already has.
 fetchCsl :: Fetch -> Text -> IO (Maybe Value)
 fetchCsl fetch doi = do
-  r <- fetch.runFetch (HttpRequest ("https://doi.org/" <> doi) [] [("Accept", "application/vnd.citationstyles.csl+json")])
+  r <- fetch.runFetch (HttpRequest (doiUrl doi) [] [("Accept", "application/vnd.citationstyles.csl+json")])
   pure $ case r of
     Right resp | resp.respStatus == 200 -> decode resp.respBody >>= normalizeCrossrefCsl
     _ -> Nothing
