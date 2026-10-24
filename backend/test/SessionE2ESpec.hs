@@ -9,6 +9,7 @@ import Control.Monad (unless, void)
 import Data.Aeson (eitherDecode, encode)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
+import Data.Char (toUpper)
 import Data.List (nub)
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -49,6 +50,21 @@ spec = do
 
 writingSpec :: Spec
 writingSpec = describe "M7 server writing" $ do
+  it "removes mixed-case inherited model and source configuration before offline startup" $ do
+    let inherited =
+          [ ("drift_config", "must-not-load-real-provider.yaml")
+          , ("dRiFt_SoUrCeS", "1")
+          , ("openalex_api_key", "sentinel-source-key")
+          , ("OpenAI_Api_Key", "sentinel-model-key")
+          , ("DrIfT_WrItInG", "1")
+          , ("drift_port", "9999")
+          , ("Drift_Db_Path", "inherited.sqlite")
+          , ("PATH", "test-toolchain")
+          ]
+    serverEnvironment (Just "0") 8081 "offline.sqlite" inherited `shouldBe`
+      [("DRIFT_PORT", "8081"), ("DRIFT_DB_PATH", "offline.sqlite"),
+       ("DRIFT_WRITING", "0"), ("PATH", "test-toolchain")]
+
   it "defaults to template writing with no model config and replays the entry after restart" $ do
     executable <- resolveServerExecutable
     port <- reservePort
@@ -197,12 +213,8 @@ withWritingServer writing executable port databasePath action =
 startServer :: Maybe String -> FilePath -> Int -> FilePath -> IO ProcessHandle
 startServer writing executable port databasePath = do
   inherited <- getEnvironment
-  let overrides = [("DRIFT_PORT", show port), ("DRIFT_DB_PATH", databasePath)]
-        <> maybe [] (\value -> [("DRIFT_WRITING", value)]) writing
-      offlineVariables = ["DRIFT_CONFIG", "DRIFT_SOURCES", "DRIFT_WRITING", "OPENALEX_API_KEY",
-        "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"]
-      environment = overrides <> filter ((`notElem` (offlineVariables <> map fst overrides)) . fst) inherited
-      process = (proc executable []) {env = Just environment}
+  let process = (proc executable [])
+        {env = Just (serverEnvironment writing port databasePath inherited)}
   if os == "mingw32"
     then processHandle <$> createProcess process
       { std_in = NoStream, std_out = Inherit, std_err = Inherit }
@@ -214,6 +226,17 @@ startServer writing executable port databasePath = do
         { std_in = UseHandle null', std_out = UseHandle null', std_err = UseHandle null' }
   where
     processHandle (_, _, _, handle) = handle
+
+-- The real process fixture and its regression share this environment builder.
+-- Keep inherited configuration out even when its spelling differs by case.
+serverEnvironment :: Maybe String -> Int -> FilePath -> [(String, String)] -> [(String, String)]
+serverEnvironment writing port databasePath inherited =
+  let overrides = [("DRIFT_PORT", show port), ("DRIFT_DB_PATH", databasePath)]
+        <> maybe [] (\value -> [("DRIFT_WRITING", value)]) writing
+      offlineVariables = ["DRIFT_CONFIG", "DRIFT_SOURCES", "DRIFT_WRITING", "OPENALEX_API_KEY",
+        "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"]
+      environment = overrides <> filter ((`notElem` (offlineVariables <> map fst overrides)) . map toUpper . fst) inherited
+   in environment
 
 stopServer :: ProcessHandle -> IO ()
 stopServer handle = do

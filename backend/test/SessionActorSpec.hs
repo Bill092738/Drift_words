@@ -488,6 +488,23 @@ spec = describe "Session actor" $ do
         submit sub (ClientMsg 3 (SetDivergence 0.3))
         map (.event) <$> events sub `shouldReturn` [DivergenceSet 0.3]
 
+    it "isolates a lazy writer field failure without leaking its sentinel diagnostic" $ do
+      let sentinel = "sentinel-secret-from-lazy-writer"
+          writer input = pure (Entry (EntryId 0) input.node (error sentinel) "" [])
+      withWriting writer $ \_ store manager -> do
+        (sid, sub) <- startWritingSession manager
+        submit sub (ClientMsg 2 (InsertWord "child"))
+        _ <- events sub
+        bounded (receive sub) >>= \case
+          Diagnostic LevelWarning message ->
+            message `shouldSatisfy` (not . Text.isInfixOf (Text.pack sentinel))
+          other -> expectationFailure (show other)
+        entryBatch sub `shouldReturn` [Entry (EntryId 1) (NodeId 2) "root \8594 child" "" []]
+        submit sub (ClientMsg 3 (SetDivergence 0.2))
+        map (.event) <$> events sub `shouldReturn` [DivergenceSet 0.2]
+        Just history <- loadEvents store sid
+        Map.size (replay (Log (reverse history))).sessionEntries `shouldBe` 1
+
     it "recovers a missing child entry on restart without duplicating existing entries" $
       withDatabase $ \path -> bracket (openStore path) closeStore $ \store -> do
         sid <- bracket (newManager store quiet) stopManager $ \manager -> do
