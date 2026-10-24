@@ -65,48 +65,6 @@ select {
   color: var(--muted);
 }
 
-/* Desk placeholder until M3/M4 land. */
-
-.desk-placeholder {
-  position: fixed;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  background-image: radial-gradient(var(--desk-dot) 1.2px, transparent 1.2px);
-  background-size: 24px 24px;
-}
-
-.desk-path {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 10px;
-  max-width: min(720px, calc(100vw - 32px));
-  padding: 0 16px 120px;
-}
-
-.desk-word {
-  padding: 8px 14px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  font: 600 15px/1.2 var(--font);
-}
-
-.desk-word[data-current] {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.desk-note {
-  position: fixed;
-  left: 16px;
-  bottom: 16px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
 /* Dev toolbar */
 
 .dev-toolbar {

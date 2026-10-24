@@ -1,6 +1,6 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 import type { SpringConfig } from '../../engine/api.ts';
-import { SpringValue } from './spring.ts';
+import { SpringValue } from '../../motion/spring.ts';
 
 export function useMediaQuery(query: string): boolean {
   return useSyncExternalStore(

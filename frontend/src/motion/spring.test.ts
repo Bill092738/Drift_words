@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { springs } from '../../engine/api.ts';
+import { springs } from '../engine/api.ts';
 import { SpringValue } from './spring.ts';
 
 function run(s: SpringValue, seconds: number, fps = 60): number[] {

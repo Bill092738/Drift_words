@@ -17,6 +17,12 @@ Read [idea.md](idea.md) for what we are building and [TECH_ROADMAP.md](TECH_ROAD
 - Judging is 3 minutes of video plus 6 minutes of Q&A. Each criterion is scored 1 to 5: Innovation, Curiosity, Communication, Project Breadth & Complexity, Impact, Challenge Navigation.
 - We are in the Open Track and aiming for the "Most Technical" superlative.
 
+## Running the frontend without a backend
+
+`make dev` opens the app on an interactive in-browser mock session (`frontend/src/transport/mockServer.ts`). It answers every command with streamed branch words and placeholder notes and sources. The toolbar can switch to replaying a protocol fixture instead. `?view=log` shows the raw event log, and `?debug=1` exposes `window.__desk.debugTiles()` (every word tile with its screen position) for end-to-end tests.
+
+Until M3 lands, the desk runs on a temporary engine in `frontend/src/desk/stubEngine.ts` that implements `frontend/src/engine/api.ts`. Swapping in M3's engine is a one-line change in `Desk.tsx`.
+
 ## Commands
 
 | Task | Command |
