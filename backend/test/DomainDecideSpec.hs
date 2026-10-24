@@ -76,15 +76,21 @@ spec = do
       decide (root {sessionNextNodeId = NodeId 40}) (InsertWord "child") `shouldBe`
         Right [NodeChosen (NodeId 40) (Just (NodeId 1)) "child" Insert Nothing]
   describe "decide: backtrack and divergence" $ do
-    it "revisits an existing node and clears old pickable candidates on apply" $ do
+    it "revisits an earlier node and clears old pickable candidates on apply" $ do
       let c = candidate 4 "child"
-          s = apply root (BranchesOffered (NodeId 1) [c])
+          sibling = candidate 5 "sibling"
+          offered = apply root (BranchesOffered (NodeId 1) [c, sibling])
+          s = apply offered (NodeChosen (NodeId 2) (Just (NodeId 1)) "child" Branch (Just (CandidateId 4)))
       decide s (Backtrack (NodeId 1)) `shouldBe` Right [NodeRevisited (NodeId 1)]
       let moved = apply s (NodeRevisited (NodeId 1))
       moved.sessionCandidates `shouldBe` Map.empty
-      Map.lookup (NodeId 1) moved.sessionRings `shouldBe` Just [c]
-      rejected (decide moved (Pick (CandidateId 4)))
+      Map.lookup (NodeId 1) moved.sessionRings `shouldBe` Just [c, sibling]
+      rejected (decide moved (Pick (CandidateId 5)))
       rejected (decide s (Backtrack (NodeId 99)))
+    it "rejects a backtrack to the current focus once its ring is pickable (no rerolls)" $ do
+      rejected (decide (apply root (BranchesOffered (NodeId 1) [candidate 4 "child"])) (Backtrack (NodeId 1)))
+      -- With nothing pickable (still generating, or the ring was lost) it recovers the ring.
+      decide root (Backtrack (NodeId 1)) `shouldBe` Right [NodeRevisited (NodeId 1)]
     forM_ [0, 0.25, 0.5, 1] $ \d ->
       it ("accepts finite divergence " <> show d) $
         decide root (SetDivergence d) `shouldBe` Right [DivergenceSet d]

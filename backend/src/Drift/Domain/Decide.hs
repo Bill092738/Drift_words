@@ -50,6 +50,12 @@ decide s command = case command of
         pure [NodeChosen s.sessionNextNodeId (Just parent) word Insert Nothing]
       Backtrack n -> do
         require (Map.member n s.sessionNodes) "Cannot revisit an unknown node."
+        -- Going "back" to the current focus would reroll a ring the user can
+        -- already see, which idea.md rules out (branches cannot be
+        -- regenerated). It stays allowed while nothing is pickable, which is
+        -- how a lost or failed ring is recovered.
+        require (s.sessionFocus /= Just n || Map.null s.sessionCandidates)
+          "Those branches are already on the desk; they cannot be regenerated."
         pure [NodeRevisited n]
       SetDivergence d -> do
         require (finite d && d >= 0 && d <= 1) "Divergence must be a finite number between 0 and 1."

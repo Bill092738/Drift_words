@@ -138,7 +138,8 @@ export class MockServer implements Transport {
         return null;
       case 'Backtrack':
         if (!this.words.has(c.node)) return 'unknown node';
-        if (c.node === this.current) return 'already there';
+        // Same rule as the backend: no rerolling a ring that is already on offer.
+        if (c.node === this.current && this.offer.size > 0) return 'those branches are already on the desk';
         this.current = c.node;
         this.emit([{ type: 'NodeRevisited', node: c.node }]);
         this.grow(c.node);
