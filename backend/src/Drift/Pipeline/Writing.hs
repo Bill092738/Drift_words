@@ -18,6 +18,7 @@ module Drift.Pipeline.Writing
   , parseWritingOutput
   , entryFromOutput
   , fallbackEntry
+  , templateEntry
   , writeEntry
   , reviseForSource
   ) where
@@ -165,6 +166,11 @@ fallbackEntry eid i =
     , explanation = ""
     , cites = []
     }
+
+-- | Provider-independent live writing. The placeholder ID and provisional
+-- citations are replaced by admission against the actor's current state.
+templateEntry :: WritingInput -> IO Entry
+templateEntry = pure . fallbackEntry (EntryId 0)
 
 -- | Asks the model for the entry. Model errors fall back to 'fallbackEntry';
 -- cancellation by the scheduler is passed through.
