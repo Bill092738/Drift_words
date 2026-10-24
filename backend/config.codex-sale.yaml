@@ -1,0 +1,18 @@
+providers:
+  codex-sale:
+    kind: openai-responses
+    base_url: https://codex.sale/v1
+    model: gpt-5.6-luna
+    embedding_model: null
+    api_key_env: CODEX_LB_API_KEY
+  mock:
+    kind: mock
+    base_url: ""
+    model: deterministic
+    embedding_model: null
+    api_key_env: null
+roles:
+  branches: codex-sale
+  embeddings: mock
+  writing: codex-sale
+  final: codex-sale

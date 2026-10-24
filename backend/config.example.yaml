@@ -1,0 +1,18 @@
+providers:
+  local:
+    kind: openai-compatible
+    base_url: http://localhost:11434/v1
+    model: TBD
+    embedding_model: null
+    api_key_env: null
+  mock:
+    kind: mock
+    base_url: ""
+    model: deterministic
+    embedding_model: null
+    api_key_env: null
+roles:
+  branches: mock
+  embeddings: mock
+  writing: mock
+  final: mock
