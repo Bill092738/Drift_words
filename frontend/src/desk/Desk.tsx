@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
 import type { StoreApi } from 'zustand/vanilla';
+import { createEngine } from '../engine/index.ts';
 import type { SessionStore } from '../store/store.ts';
 import { DeskScene } from './DeskScene.ts';
-import { createStubEngine } from './stubEngine.ts';
 import './desk.css';
 
 /** The infinite desk: a canvas engine with the word tree scene on top. */
@@ -17,8 +17,7 @@ export function Desk({ store, onScene }: { store: StoreApi<SessionStore>; onScen
     if (el === null) return;
     let disposed = false;
     let cleanup = () => {};
-    // TODO(M3): switch to the engine's createEngine once it lands.
-    void createStubEngine(el).then((engine) => {
+    void createEngine(el).then((engine) => {
       if (disposed) {
         engine.destroy();
         return;

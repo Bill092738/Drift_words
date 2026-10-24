@@ -75,6 +75,11 @@ export class WordTile implements Drawable {
     return this.variant === 'cloud' || this.variant === 'candidate' || this.variant === 'faded';
   }
 
+  /** Still moving to its target, changing size, or waiting to appear. */
+  get animating(): boolean {
+    return this.delay > 0 || !(this.x.settled && this.y.settled && this.scale.settled);
+  }
+
   /** Where the tile is heading, without drift. */
   get target(): Vec {
     return { x: this.x.target, y: this.y.target };

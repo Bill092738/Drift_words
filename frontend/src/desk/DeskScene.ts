@@ -1,7 +1,7 @@
 import { Graphics } from 'pixi.js';
 import { createNoise2D } from 'simplex-noise';
 import type { StoreApi } from 'zustand/vanilla';
-import type { Engine, FrameInfo, Intent, Vec } from '../engine/api.ts';
+import type { Engine, FrameInfo, Intent, Rect, Vec } from '../engine/api.ts';
 import { springs } from '../engine/api.ts';
 import type { Candidate, CandidateId, NodeId, SourceId } from '../protocol/index.ts';
 import type { NodeState, SessionState, SourceState } from '../store/session.ts';
@@ -62,6 +62,8 @@ export class DeskScene {
   private faded: { tile: WordTile; generation: number }[] = [];
   private generation = 0;
   private readonly edges = new Graphics();
+  /** World bounds of all edges, for the engine's culling. */
+  private edgeBounds: Rect = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
   private readonly sources = new Map<SourceId, SourceObject>();
   /** The source lifted toward the viewer; a second tap opens it. */
   private focusedSource: SourceId | null = null;
@@ -77,7 +79,8 @@ export class DeskScene {
     const screenWidth = (engine.camera.viewport.maxX - engine.camera.viewport.minX) * engine.camera.zoom;
     this.baseZoom = screenWidth < NARROW_SCREEN_PX ? NARROW_ZOOM : 1;
     engine.camera.glideTo(engine.camera.center, this.baseZoom);
-    engine.add('edges', { id: 'edges', view: this.edges, bounds: () => ({ minX: 0, minY: 0, maxX: 0, maxY: 0 }), interactive: false, moving: false });
+    // Edges change shape every frame as nodes settle, so they count as moving.
+    engine.add('edges', { id: 'edges', view: this.edges, bounds: () => this.edgeBounds, interactive: false, moving: true });
     this.disposers.push(
       engine.onFrame((f) => this.frame(f)),
       engine.onIntent((i) => this.intent(i)),
@@ -276,6 +279,9 @@ export class DeskScene {
         this.cloud.delete(node.fromCandidate as CandidateId);
       }
       this.engine.remove(reused.id);
+      // Registered as a static node, so the engine indexes it instead of
+      // checking it every frame.
+      reused.setVariant('node');
       tile = this.retag(reused, key);
       tile.drift.x = tile.drift.y = 0;
       tile.x.snap(reused.position.x);
@@ -393,7 +399,13 @@ export class DeskScene {
 
     for (const t of this.cloud.values()) this.applyDrift(t, time, 1);
     for (const f of this.faded) this.applyDrift(f.tile, time, 0.7);
-    for (const t of this.allTiles()) t.update(dt);
+    for (const t of this.allTiles()) {
+      // Static tiles (nodes) live in the engine's spatial index: re-index them
+      // while they fly to their place or change size, and once as they settle.
+      const settling = !t.moving && t.animating;
+      t.update(dt);
+      if (settling) this.engine.moved(t.id);
+    }
     for (const o of this.sources.values()) {
       const moving = o.moving;
       o.update(dt);
@@ -425,6 +437,7 @@ export class DeskScene {
     const s = this.prev;
     const g = this.edges.clear();
     if (s === null) return;
+    const box = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
     // Edges on the path from the root to the current node are emphasized.
     const onPath = new Set<NodeId>();
     for (let id = s.current; id !== null; id = s.nodes.get(id)?.parent ?? null) onPath.add(id);
@@ -441,10 +454,16 @@ export class DeskScene {
       const cx = mx - (b.y - a.y) * k;
       const cy = my + (b.x - a.x) * k;
       const path = onPath.has(node.id);
+      // The curve stays inside the triangle of its end and control points.
+      box.minX = Math.min(box.minX, a.x, b.x, cx);
+      box.minY = Math.min(box.minY, a.y, b.y, cy);
+      box.maxX = Math.max(box.maxX, a.x, b.x, cx);
+      box.maxY = Math.max(box.maxY, a.y, b.y, cy);
       g.moveTo(a.x, a.y)
         .quadraticCurveTo(cx, cy, b.x, b.y)
         .stroke({ width: path ? 2 : 1.25, color: path ? this.theme.accent : this.theme.muted, alpha: path ? 0.55 : 0.3 });
     }
+    if (box.minX <= box.maxX) this.edgeBounds = box;
   }
 
   // ---------------------------------------------------------------------------
@@ -458,12 +477,14 @@ export class DeskScene {
     const send = this.store.getState().send;
     const id = Number(i.id.slice(1));
     if (i.id.startsWith('s')) {
-      // First tap lifts it, a second tap opens the original material.
-      if (i.type === 'open' || this.focusedSource === id) this.openSource(id);
+      // First tap lifts it, a second tap opens the original material. The
+      // desk's own focus decides, not the intent type: focus also changes
+      // through Escape and the sidebar, which the engine does not see.
+      if (this.focusedSource === id) this.openSource(id);
       else this.focusSource(id);
       return;
     }
-    if (i.type !== 'select') return;
+    // A repeated tap on a word (`open`) means the same as the first one.
     this.focusSource(null);
     if (i.id.startsWith('c')) {
       const tile = this.ring.get(id) ?? this.cloud.get(id);
