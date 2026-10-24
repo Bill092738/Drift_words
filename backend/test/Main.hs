@@ -2,16 +2,21 @@ module Main (main) where
 
 import qualified BranchServiceSpec
 import qualified BranchesSpec
+import qualified CiteSpec
 import qualified CitationsSpec
 import qualified CslSpec
 import qualified DomainDecideSpec
 import qualified DomainPropertySpec
 import qualified DomainReplaySpec
+import qualified DraftSpec
 import qualified EntriesSpec
+import qualified ExportSpec
+import qualified FinalSpec
 import qualified HttpSpec
 import qualified LiveSpec
 import qualified ModelProviderSpec
 import qualified OpenAlexSpec
+import qualified OutputsWiringSpec
 import qualified PipelineSpec
 import qualified PrefetchSpec
 import qualified ProtocolSpec
@@ -25,6 +30,7 @@ import SourceServerFixture (runSourceServer)
 import System.Environment (getArgs)
 import Test.Hspec (describe, hspec)
 import qualified TextSpec
+import qualified TreeSpec
 import qualified WikipediaSpec
 import qualified WritingSpec
 
@@ -59,3 +65,9 @@ runSpecs = hspec $ do
   RelevanceSpec.spec
   PipelineSpec.spec
   LiveSpec.spec
+  describe "Decision tree" TreeSpec.spec
+  describe "Citations in outputs" CiteSpec.spec
+  describe "Draft" DraftSpec.spec
+  describe "Final document" FinalSpec.spec
+  describe "Export" ExportSpec.spec
+  describe "Wrap-up outputs" OutputsWiringSpec.spec

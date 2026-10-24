@@ -4,9 +4,11 @@
 -- | One serialized writer per session. The registry belongs to one manager;
 -- callers must not run two live managers against the same session database.
 module Drift.Server.SessionActor
-  ( BranchGenerator, CloudGenerator, EntryWriter, SourceSearch, Pipelines (..), Manager, Subscription
+  ( BranchGenerator, CloudGenerator, EntryWriter, SourceSearch, OutputsGenerator, StoredOutputs (..)
+  , Pipelines (..), Manager, Subscription
   , newManager, newManagerWith, newManagerWithCloud, newManagerWithPipelinesAndCloud
   , createManagedSession, subscribeSession
+  , newManagerWithOutputs, withOutputs, storedOutputs
   , newManagerWithAppendObserver, subscribeSessionWithJoinObserver
   , newManagerWithSourceWait
   , sourceConcurrency, sourceQueueCapacity, sourceWaitMicros
@@ -39,6 +41,10 @@ import Drift.Store.SQLite
 type EntryWriter = WritingInput -> IO Entry
 type SourceSearch = SourceRequest -> (SourceDraft -> IO ()) -> IO ()
 
+-- | Builds the three wrap-up outputs from a session's whole log, oldest first.
+-- It runs in a worker after the session is wrapped up, never on the actor.
+type OutputsGenerator = [Stamped] -> IO Outputs
+
 -- | The words of a new session's starting cloud. It may take a while (a model
 -- call) and must not throw; it runs before any lock is taken.
 type CloudGenerator = Lang -> IO [Text]
@@ -70,7 +76,16 @@ createManager store pipelines observer = mask $ \_ -> do
       workers <- replicateM sourceConcurrency $ asyncWithUnmask $ \unmask ->
         unmask (forever (atomically (readTBQueue queue) >>= id))
       pure (Just (SourceRuntime queue workers))
-  pure (Manager store pipelines (pure . mockCloud) registry observer runtime (threadDelay sourceWaitMicros))
+  pure Manager
+    { managerStore = store
+    , managerPipelines = pipelines
+    , managerCloud = pure . mockCloud
+    , managerRegistry = registry
+    , managerAppendObserver = observer
+    , managerSourceRuntime = runtime
+    , managerSourceWait = threadDelay sourceWaitMicros
+    , managerOutputs = Nothing
+    }
 
 -- | One shared queue/pool per server, including work from different sessions.
 -- The queue contains closures, never durable jobs; a full queue drops newest.
@@ -89,6 +104,7 @@ data Manager = Manager
   , managerAppendObserver :: SessionId -> [Event] -> Either StoreException () -> IO ()
   , managerSourceRuntime :: Maybe SourceRuntime
   , managerSourceWait :: IO ()
+  , managerOutputs :: Maybe OutputsGenerator
   }
 
 data Registry = Running (Map.Map SessionId Actor) | Stopped (Async ())
@@ -120,6 +136,8 @@ data Message
   | SourceArrived NodeId SourceDraft
   | SourceFailed
   | BeginWriting NodeId
+  | OutputsDone (Either Text Outputs)
+    -- ^ the wrap-up outputs, or why they could not be made
   | Halt
 
 data ActorState = ActorState
@@ -132,6 +150,8 @@ data ActorState = ActorState
   , stateCurrentWorker :: Maybe (Async ())
   , stateWorkers :: [Async ()]
   , stateWritingStarted :: Set.Set NodeId
+  , stateOutputsStarted :: Bool
+    -- ^ the outputs worker was started for this wrapped-up session
   }
 
 -- | A manager whose sessions start from the offline cloud ("Drift.Model.SessionMock").
@@ -149,6 +169,17 @@ newManagerWithPipelinesAndCloud store pipelines cloud = do
   manager <- newManagerWith store pipelines
   pure manager {managerCloud = cloud}
 
+-- | After a session is wrapped up the generator builds its outputs, which are
+-- then committed and broadcast as 'OutputsReady'. A wrapped-up session loaded
+-- without outputs (the server stopped mid-way) gets them made when it is next
+-- loaded. Combines with any manager, such as one from 'newManagerWithCloud'.
+withOutputs :: OutputsGenerator -> Manager -> Manager
+withOutputs outputs manager = manager {managerOutputs = Just outputs}
+
+-- | 'newManager' with 'withOutputs'.
+newManagerWithOutputs :: Store -> BranchGenerator -> OutputsGenerator -> IO Manager
+newManagerWithOutputs store generator outputs = withOutputs outputs <$> newManager store generator
+
 -- | Test seam, never sent over the wire. The observer runs after each append
 -- attempt and must return normally; production wiring uses newManager.
 newManagerWithAppendObserver
@@ -156,6 +187,21 @@ newManagerWithAppendObserver
   -> (SessionId -> [Event] -> Either StoreException () -> IO ()) -> IO Manager
 newManagerWithAppendObserver store generator observer =
   createManager store (Pipelines generator Nothing Nothing) observer
+
+data StoredOutputs = NoSuchSession | OutputsNotReady | OutputsStored Outputs
+  deriving (Eq, Show)
+
+-- | The outputs of a session, read from its durable log, so it works for
+-- sessions that are not loaded.
+storedOutputs :: Manager -> SessionId -> IO StoredOutputs
+storedOutputs manager sid = do
+  loaded <- try (loadEvents manager.managerStore sid)
+  pure $ case loaded of
+    Left (_ :: StoreException) -> NoSuchSession
+    Right Nothing -> NoSuchSession
+    Right (Just history) -> case [o | stamped <- reverse history, OutputsReady o <- [stamped.event]] of
+      o : _ -> OutputsStored o
+      [] -> OutputsNotReady
 
 -- | A collision is retried against the durable uniqueness constraint. No
 -- process-local counter or clock value is trusted to prove global uniqueness.
@@ -275,10 +321,11 @@ startActor manager sid history = do
   let logValue = Log (reverse history)
       session = replay logValue
       initial = ActorState session logValue (length history) Map.empty 0
-        session.sessionNextCandidateId Nothing [] Set.empty
+        session.sessionNextCandidateId Nothing [] Set.empty False
   -- Registry mutation stays masked; the actor itself runs unmasked.
   thread <- asyncWithUnmask $ \unmask ->
-    unmask ((recoverWriting inbox initial >>= loop inbox) `finally` atomically (writeTVar alive False))
+    unmask ((recoverWriting inbox initial >>= startOutputs inbox >>= loop inbox)
+      `finally` atomically (writeTVar alive False))
   pure (Actor inbox alive thread)
   where
     loop inbox state = do
@@ -311,8 +358,21 @@ startActor manager sid history = do
                 Just committed -> do
                   writing <- foldM (startEdge inbox) committed
                     [target | NodeChosen target (Just _) _ _ _ <- events]
-                  if any changesGeneration events
+                  generated <- if any changesGeneration events
                     then regenerate inbox writing else pure writing
+                  startOutputs inbox generated
+          loop inbox next
+        OutputsDone result -> do
+          next <- case result of
+            _ | Just _ <- current.stateSession.sessionOutputs -> pure current
+            Left failure -> do
+              broadcast current (Diagnostic LevelError ("The final outputs could not be made: " <> failure))
+              pure current
+            Right outputs -> commit current [OutputsReady outputs] >>= \case
+              Nothing -> do
+                broadcast current (Diagnostic LevelError "Saving the final outputs failed.")
+                pure current
+              Just committed -> pure committed
           loop inbox next
         Diagnose token diagnostic -> do
           when (token == current.stateGeneration) (broadcast current diagnostic)
@@ -463,6 +523,29 @@ startActor manager sid history = do
                 | otherwise -> pure (Left "Entry writing failed.")
             atomically (writeTQueue inbox (Written input result))
           pure state {stateWorkers = worker : state.stateWorkers}
+
+    -- Once a session is wrapped up and has no outputs yet, build them in a
+    -- worker (the model may be slow) and hand the result back through the inbox.
+    -- Branch generation stops at wrap-up, so nothing else competes for the model.
+    startOutputs inbox state = case manager.managerOutputs of
+      Just generate
+        | state.stateSession.sessionWrapped
+        , Nothing <- state.stateSession.sessionOutputs
+        , not state.stateOutputsStarted -> do
+            let Log newest = state.stateLog
+            worker <- async $ do
+              outcome <- try $ do
+                outputs <- generate (reverse newest)
+                -- Force the text here, away from the actor's pure fold.
+                _ <- evaluate (sum (map Text.length [outputs.decisionTree, outputs.draft, outputs.final]))
+                pure outputs
+              case outcome of
+                Right outputs -> atomically (writeTQueue inbox (OutputsDone (Right outputs)))
+                Left (failure :: SomeException)
+                  | Just _ <- fromException @SomeAsyncException failure -> throwIO failure
+                  | otherwise -> atomically (writeTQueue inbox (OutputsDone (Left (describe failure))))
+            pure state {stateOutputsStarted = True, stateWorkers = worker : state.stateWorkers}
+      _ -> pure state
 
     regenerate inbox state = do
       -- cancel waits for the target to finish. Run that wait outside the actor

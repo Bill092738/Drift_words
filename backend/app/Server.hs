@@ -10,6 +10,9 @@
 --   the deterministic offline vocabulary ("Drift.Model.SessionMock").
 -- * @DRIFT_WRITING@: set to 0 to disable sidebar entries. By default each
 --   non-root edge receives a deterministic template entry, without a model.
+-- * The config's optional @final@ role writes the final document at wrap-up.
+--   Without it, or when the model fails, the final document is the kept
+--   entries' own text.
 -- * @DRIFT_PREFETCH@: set to 0 to turn off speculative prefetch of the next
 --   rings (on by default; it costs one extra model call per offered word).
 -- * @DRIFT_STATIC_DIR@: the built frontend to serve at @/@ (default
@@ -23,15 +26,18 @@ import qualified Data.Text as T
 import Drift.Api (api, server)
 import Drift.Model.Config
 import Drift.Model.OpenAICompat (RequestOptions (..))
-import Drift.Model.Provider (ModelProvider (..))
+import Drift.Model.Provider (GenRequest (..), ModelProvider (..))
 import Drift.Model.SessionMock (BranchGenerator, mockBranches, mockCloud)
+import Drift.Output.Assemble (modelOutputs)
+import Drift.Output.Final (Generate)
 import Drift.Pipeline.Cloud (modelCloud)
 import Drift.Pipeline.BranchService (closeBranchService, newBranchService, withParallelPrefetch)
 import Drift.Pipeline.SessionBranches (liveBranches)
 import Drift.Pipeline.Writing (templateEntry)
 import Drift.Pipeline.Sources (SourceEnv (..), defaultSourceEnv, findSources)
 import Drift.Search.Http (defaultHttpConfig, redactApiKeys, withFetch)
-import Drift.Server.SessionActor (CloudGenerator, Pipelines (..), SourceSearch, newManagerWithPipelinesAndCloud, stopManager)
+import Drift.Server.SessionActor
+  (CloudGenerator, Pipelines (..), SourceSearch, newManagerWithPipelinesAndCloud, stopManager, withOutputs)
 import Drift.Server.WebSocket (webSocketApp)
 import Drift.Store.SQLite (closeStore, openStore)
 import Network.HTTP.Types (status200, status404)
@@ -57,13 +63,18 @@ main = do
   prefetch <- (/= Just "0") <$> lookupEnv "DRIFT_PREFETCH"
   staticDir <- maybe "../frontend/dist" id <$> lookupEnv "DRIFT_STATIC_DIR"
   frontend <- frontendApp staticDir
+  finalModel <- loadFinalModel configPath
+  outputs <-
+    either (die . ("final outputs: " <>) . T.unpack) pure $
+      modelOutputs finalModel (hPutStrLn stderr . ("final outputs: " <>) . T.unpack)
   withGenerator configPath prefetch $ \generator cloud -> withSources $ \sources -> do
     putStrLn (if writing then "writing: deterministic template" else "writing: disabled")
     putStrLn ("drift-server listening on http://localhost:" <> show port)
     putStrLn ("session database: " <> databasePath)
     bracket (openStore databasePath) closeStore $ \store ->
       bracket
-        (newManagerWithPipelinesAndCloud store (Pipelines generator (if writing then Just templateEntry else Nothing) sources) cloud)
+        (withOutputs outputs <$> newManagerWithPipelinesAndCloud store
+          (Pipelines generator (if writing then Just templateEntry else Nothing) sources) cloud)
         stopManager $ \manager -> do
           let backend = serve api (server manager)
               app request respond = case pathInfo request of
@@ -121,6 +132,20 @@ withGenerator (Just path) prefetch action = do
   let configure = if parallel then withParallelPrefetch else id
   bracket (configure <$> newBranchService provider (providerModel branchConfig) embedder) closeBranchService $ \service ->
     action (liveBranches prefetch service) cloud
+
+-- | The model for the final document, from the config's optional @final@ role.
+-- Only names are printed: the API key never is.
+loadFinalModel :: Maybe FilePath -> IO (Maybe Generate)
+loadFinalModel Nothing = pure Nothing
+loadFinalModel (Just path) = do
+  config <- loadModelConfig path >>= either (die . (("cannot read " <> path <> ": ") <>) . T.unpack) pure
+  finalConfig <- either (die . (("model config " <> path <> ": ") <>) . show) pure (resolveOptionalProvider config FinalRole)
+  case finalConfig of
+    Nothing -> Nothing <$ putStrLn "final document: no final role, using the kept entries' own text"
+    Just cfg -> do
+      provider <- createModelProvider cfg
+      putStrLn ("final document: " <> T.unpack (providerName provider) <> " " <> T.unpack (providerModel cfg))
+      pure (Just (\prompt -> generate provider (GenRequest prompt (providerModel cfg) 0 700) (const (pure ()))))
 
 -- | Serves the built frontend, with index.html for every path that is not a
 -- file. Without a build, it answers with a hint instead.

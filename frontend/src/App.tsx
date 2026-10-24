@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { StoreApi } from 'zustand/vanilla';
 import { Controls } from './chrome/controls/Controls.tsx';
+import { OutputsHost } from './chrome/outputs/OutputsHost.tsx';
 import { Sidebar } from './chrome/sidebar/Sidebar.tsx';
 import { Desk } from './desk/Desk.tsx';
 import type { DeskScene } from './desk/DeskScene.ts';
@@ -50,11 +51,19 @@ export function App() {
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [store, setStore] = useState<StoreApi<SessionStore> | null>(null);
   const [liveStatus, setLiveStatus] = useState<string | null>(null);
+  // The live session's id, for the downloads the backend makes; null offline.
+  const [liveSessionId, setLiveSessionId] = useState<string | null>(null);
+  const [outputsOpen, setOutputsOpen] = useState(false);
+  const [wrapRequested, setWrapRequested] = useState(false);
   const desk = useRef<DeskScene | null>(null);
   // One session per live run, even when StrictMode runs the effect twice.
   const creating = useRef<{ run: number; id: Promise<string> } | null>(null);
 
   useEffect(() => {
+    // A new session starts without the previous one's outputs on screen.
+    setOutputsOpen(false);
+    setWrapRequested(false);
+    setLiveSessionId(null);
     if (mode === LIVE) {
       let cancelled = false;
       let cleanup = () => {};
@@ -69,6 +78,7 @@ export function App() {
         (sessionId) => {
           if (cancelled) return;
           setSessionInUrl(sessionId);
+          setLiveSessionId(sessionId);
           const transport = WebSocketTransport.forSession(sessionId, {
             onStatus: (status) => setLiveStatus(STATUS_LABELS[status]),
           });
@@ -125,7 +135,16 @@ export function App() {
   return (
     <>
       {store && <Desk store={store} onScene={(scene) => (desk.current = scene)} />}
-      {store && <Controls store={store} />}
+      {store && <Controls store={store} onWrapUp={() => setWrapRequested(true)} onViewOutputs={() => setOutputsOpen(true)} />}
+      {store && (
+        <OutputsHost
+          store={store}
+          sessionId={liveSessionId}
+          open={outputsOpen}
+          onOpenChange={setOutputsOpen}
+          autoOpen={wrapRequested}
+        />
+      )}
       {store && (
         <Sidebar key={`${mode}-${speed}-${run}`} store={store} onLocateSource={(id) => desk.current?.locateSource(id)} />
       )}

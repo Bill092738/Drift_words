@@ -12,7 +12,9 @@ import type {
   SourceKind,
   Stamped,
 } from '../protocol/index.ts';
+import { applyEvents, emptySession } from '../store/session.ts';
 import { answerDeterministic } from './mock.ts';
+import { mockOutputs } from './mockOutputs.ts';
 import { Listeners, type ServerListener, type Transport } from './transport.ts';
 import { relatedWords, rng, shuffle, wordBank } from './wordbank.ts';
 
@@ -60,6 +62,9 @@ export class MockServer implements Transport {
   private nextReq = 1;
   private started = false;
   private closed = false;
+  private wrapped = false;
+  /** Everything emitted so far, to build the wrap-up outputs from. */
+  private readonly history: Stamped[] = [];
 
   private nextNode = 1;
   private nextCandidate = 1;
@@ -148,7 +153,14 @@ export class MockServer implements Transport {
         this.divergence = Math.min(1, Math.max(0, c.divergence));
         break;
       case 'WrapUp':
+        // Like the backend: a second wrap-up changes nothing.
+        if (this.wrapped) return null;
+        this.wrapped = true;
         this.emit([{ type: 'WrappedUp' }]);
+        // The outputs follow the wrap-up as a separate event, a moment later.
+        this.later(this.opts.firstWordMs + 600, () =>
+          this.emit([{ type: 'OutputsReady', outputs: mockOutputs(applyEvents(emptySession, this.history)) }]),
+        );
         return null;
       default:
         break;
@@ -229,6 +241,7 @@ export class MockServer implements Transport {
   private emit(events: Event[]): void {
     const at = Date.now();
     const stamped: Stamped[] = events.map((event) => ({ seq: ++this.seq, atMs: at, event }));
+    this.history.push(...stamped);
     this.reply({ type: 'Events', events: stamped });
   }
 

@@ -6,7 +6,7 @@ Driftwords is a browser-based tool for the moments when you want to do something
 
 Language models and web search run in the background. You never talk to an AI.
 
-> **Status:** M1 to M5 are in place. The M6 live English MVP runs opt-in Wikipedia/OpenAlex searches; M7 writes persistent template notes for every non-root edge without a model. Sources, citations, notes, curation and placements replay after reconnect or server restart. Gemini writing, model-backed relevance and additional source providers remain follow-ups; M8 outputs remain. "Driftwords" is a working title.
+> **Status:** M1 to M8 are integrated. The M6 live English MVP runs opt-in Wikipedia/OpenAlex searches; M7 writes persistent template notes for every non-root edge; M8 turns the durable tree, notes and citations into a decision tree, draft and final document with Markdown, HTML and Word downloads. Gemini can generate the cloud, rings, embeddings and final rewrite; Gemini note writing, model-backed relevance and additional source providers remain follow-ups. "Driftwords" is a working title.
 
 ## Documents
 
@@ -78,7 +78,8 @@ Open `http://localhost:8080/?live`. `backend/config.gemini.yaml` routes the role
 | Role | Model | Why |
 | --- | --- | --- |
 | `branches`, `cloud` | `gemini-3.1-flash-lite` | about 1.4 s per answer; rings and the cloud are on the critical path |
-| `writing`, `final` | `gemini-3.8-flash` | configured for future integration; current notes are templates and M8 final output is pending |
+| `writing` | `gemini-3.8-flash` | configured for future integration; current notes are deterministic templates |
+| `final` | `gemini-3.8-flash` | rewrites the M8 final document; falls back to kept note text on failure |
 | `embeddings` | `gemini-embedding-001` | divergence band; about 0.5 s per ring |
 
 To put 3.8 Flash behind the rings too, set `branches: gemini` in that file. Expect a 4 to 10 s wait whenever a pick misses the prefetch (the first pick, a backtrack, a typed word).

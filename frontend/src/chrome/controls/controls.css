@@ -146,3 +146,36 @@
     animation: none;
   }
 }
+
+.wrap-up,
+.outputs-open {
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--chip);
+  color: var(--fg);
+  font: 600 13px/1 var(--font);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.wrap-up[data-confirming] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.outputs-open {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.controls-wrapped {
+  padding: 6px 16px;
+}
+
+.wrap-status {
+  color: var(--muted);
+  font: 500 13px/1 var(--font);
+}
