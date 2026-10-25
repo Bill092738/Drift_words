@@ -13,7 +13,25 @@ export interface EntryView {
   struck: boolean;
   /** Reference numbers, in the order the entry cites them. */
   cites: number[];
+  /** A short label for each cited source (its site, else its kind), aligned with {@link cites}. */
+  citeLabels: string[];
+  /** False when the relation only repeats the "from → to" header, as template notes do. */
+  showRelation: boolean;
   writtenSeq: number;
+}
+
+const kindLabels: Record<Source['kind'], string> = {
+  article: 'Article',
+  paper: 'Paper',
+  pdf: 'PDF',
+  webPage: 'Web page',
+  image: 'Image',
+  audio: 'Audio',
+};
+
+/** The header line as the sidebar shows it, for comparing with a relation. */
+export function pathLabel(from: string | null, to: string): string {
+  return from === null ? to : `${from} \u2192 ${to}`;
 }
 
 export interface ReferenceView {
@@ -44,15 +62,23 @@ export function sidebarModel(s: SessionState, order: EntryOrder): SidebarModel {
   const entries = written.map(({ entry, priority, struck, writtenSeq }): EntryView => {
     const node = s.nodes.get(entry.node);
     const parent = node?.parent == null ? undefined : s.nodes.get(node.parent);
+    const from = parent?.word ?? null;
+    const to = node?.word ?? '?';
+    const cited = entry.cites.filter((id) => numbers.has(id));
     return {
       id: entry.entryId,
-      from: parent?.word ?? null,
-      to: node?.word ?? '?',
+      from,
+      to,
       relation: entry.relation,
+      showRelation: entry.relation.trim() !== '' && entry.relation.trim() !== pathLabel(from, to),
+      citeLabels: cited.map((id) => {
+        const source = s.sources.get(id)?.source;
+        return source === undefined ? '' : (source.site ?? kindLabels[source.kind]);
+      }),
       explanation: entry.explanation,
       priority,
       struck,
-      cites: entry.cites.flatMap((id) => numbers.get(id) ?? []),
+      cites: cited.map((id) => numbers.get(id) ?? 0),
       writtenSeq,
     };
   });

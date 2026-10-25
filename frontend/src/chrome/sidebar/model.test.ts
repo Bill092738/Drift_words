@@ -6,6 +6,16 @@ import { sidebarModel } from './model.ts';
 const session = applyEvents(emptySession, fixtures.get('exploration') ?? []);
 
 describe('sidebarModel', () => {
+  it('hides a relation that only repeats the header, and labels citations by site', () => {
+    const live = applyEvents(session, [
+      { seq: 1000, atMs: 0, event: { type: 'EntryWritten', entry: { entryId: 99, node: 2, relation: 'entropy \u2192 information', explanation: '', cites: [2] } } },
+    ]);
+    const e = sidebarModel(live, 'path').entries.find((x) => x.id === 99);
+    expect(e?.showRelation).toBe(false);
+    expect(e?.citeLabels).toEqual(['Bell System Technical Journal']);
+    expect(sidebarModel(session, 'path').entries[0]?.showRelation).toBe(true);
+  });
+
   it('lists entries in path order with the words they connect', () => {
     const { entries } = sidebarModel(session, 'path');
     expect(entries.map((e) => `${e.from} -> ${e.to}`)).toEqual([

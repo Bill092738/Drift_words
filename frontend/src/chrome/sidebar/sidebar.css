@@ -273,6 +273,39 @@
   cursor: pointer;
 }
 
+.cite-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 0;
+}
+
+.cite-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px 2px 3px;
+  border: none;
+  border-radius: 6px;
+  background: var(--chip);
+  color: var(--fg-secondary);
+  font: 500 11.5px/1.5 var(--font);
+  cursor: pointer;
+}
+
+.cite-chip .cite-number {
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.cite-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .entry-actions {
   grid-area: actions;
   display: flex;
