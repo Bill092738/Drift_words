@@ -1,6 +1,6 @@
-# Source search (M6 live English MVP)
+# Source search (M6 live, English)
 
-Finds sources for one edge of the word tree: it searches Wikipedia and OpenAlex, applies an English word-overlap relevance heuristic, normalizes retrieved CSL-JSON, drops duplicates and hands each accepted source to the caller as a `SourceDraft`. It knows nothing about sessions. See [TECH_ROADMAP.md section 4.7](../../TECH_ROADMAP.md).
+Finds sources for one edge of the word tree: it searches Wikipedia, OpenAlex and Wikimedia Commons, applies an English word-overlap relevance heuristic, normalizes retrieved CSL-JSON, drops duplicates and hands each accepted source to the caller as a `SourceDraft`. It knows nothing about sessions. See [TECH_ROADMAP.md section 4.7](../../TECH_ROADMAP.md).
 
 ```haskell
 findSources :: SourceEnv -> SourceRequest -> (SourceDraft -> IO ()) -> IO ()   -- Drift.Pipeline.Sources
@@ -19,20 +19,22 @@ Entries, sources, citations, curation and placements are replayed from SQLite. A
 
 ## Behavior
 
-- At most 2 sources per edge (`envMaxPerEdge`), often 0. The best passing result of each provider goes first, so there is one page and one paper rather than two of the same kind. With fewer places than providers (`envMaxPerEdge = 1`), the pipeline waits for both and takes the best score, so the result does not depend on which provider answers first.
+- **A kind mix per edge.** Before searching, each edge draws two different kinds by weight (`kindWeights`: image 0.35, web page 0.25, paper or PDF 0.25, audio 0.15) and asks only their providers: Wikipedia for web pages, OpenAlex for papers and PDFs, Commons for images and audio. The draw (`drawKinds`) is seeded from the edge's path and words (`edgeSeed`), so it is the same after a restart and in tests. If the drawn kinds leave places free, a second round asks the keyless providers not asked yet (never OpenAlex, whose budget is metered).
+- **Kinds.** Wikipedia results are web pages with their thumbnail when the article has one. An OpenAlex work becomes a `pdf` when its open-access PDF link ends in `.pdf` or is an arXiv `/pdf/` link, and a `paper` otherwise; the DOI stays in its CSL either way. Commons results are images (with a 320 px thumbnail) or audio; their URL is the file page, which shows the licence, and the licence is kept in the CSL `note`. Audio shorter than 5 s and pronunciation clips such as `En-us-tide.ogg` are dropped.
+- At most 2 sources per edge (`envMaxPerEdge`), often 0. The best passing result of each provider goes first, so there are two different kinds rather than two of the same. With fewer places than providers (`envMaxPerEdge = 1`), the pipeline waits for both and takes the best score, so the result does not depend on which provider answers first.
 - Sources are delivered one at a time, as they are accepted. Failures, timeouts, rate limits and malformed responses are logged and dropped; the search never throws for them and stops when its thread is cancelled.
 - Only `http(s)` links reach the desk, titles are plain text (markup and entities removed), and CSL-JSON comes from retrieved metadata only, never from model text.
 - Papers need a DOI. The exact CSL-JSON comes from doi.org content negotiation; if that fails, the fields OpenAlex returned are used. DOI links are percent-encoded, so old DOIs with `<`, `>`, `;` or `#` resolve. Book and chapter references keep their editor, edition and place.
-- The relevance check is a replaceable `RelevanceJudge`. The default is a word-overlap heuristic: both words of the connection must appear in the title or the provider's text, one of them in the title. It matches words, not meaning (for example "apple" and "newton" also accept the old Apple Newton PDA). The words above the edge (`pathWords`) only rank sources that already pass: a source that also mentions them scores higher. A model-backed judge can replace it without changing the pipeline.
+- The relevance check is a replaceable `RelevanceJudge`. The default is a word-overlap heuristic: both words of the connection must appear in the title or the provider's text, one of them in the title. Commons file titles are short, so for images and audio the description also counts as the title. It matches words, not meaning (for example "apple" and "newton" also accept the old Apple Newton PDA). The words above the edge (`pathWords`) only rank sources that already pass: a source that also mentions them scores higher. A model-backed judge can replace it without changing the pipeline.
 - English only. The heuristic splits text on spaces and punctuation, so it does not work for Chinese, which has no spaces between words; Chinese is out of scope for now.
 
 ## HTTP behavior
 
-- **OpenAlex** receives the optional `OPENALEX_API_KEY`; startup logs only whether it is present. The pipeline makes one search per edge. After HTTP 429, a numeric `Retry-After` takes priority. Without it, a numeric `x-ratelimit-remaining` at or below zero selects numeric `x-ratelimit-reset`, falling back to 60 seconds if reset is absent or invalid; positive remaining budget selects 2 seconds. Missing or invalid remaining-budget data selects 60 seconds. Numeric waits are rounded up and clamped to 1–86,400 seconds. Current provider quotas and availability are external conditions, not guarantees from the offline test suite.
-- **Wikipedia** and **doi.org**: a descriptive User-Agent and a short gap between requests. Responses are cached for an hour, at most 512 of them.
+- **OpenAlex** receives the optional `OPENALEX_API_KEY`; startup logs only whether it is present. The pipeline makes at most one search per edge, and only for edges that drew the paper kind. After HTTP 429, a numeric `Retry-After` takes priority. Without it, a numeric `x-ratelimit-remaining` at or below zero selects numeric `x-ratelimit-reset`, falling back to 60 seconds if reset is absent or invalid; positive remaining budget selects 2 seconds. Missing or invalid remaining-budget data selects 60 seconds. Numeric waits are rounded up and clamped to 1–86,400 seconds. Current provider quotas and availability are external conditions, not guarantees from the offline test suite.
+- **Wikipedia**, **Wikimedia Commons** and **doi.org**: no key, a descriptive User-Agent and a short gap between requests. Responses are cached for an hour, at most 512 of them.
 - **Crossref search** and **arXiv search** are not used yet; their provider-specific request policies belong to that future integration.
 
-HTTP errors redact `api_key` query values before logging. Crossref DOI metadata obtained through doi.org is not Crossref search support. Gemini writing, model-backed relevance, Chinese retrieval, Commons and additional search providers remain deferred.
+HTTP errors redact `api_key` query values before logging. Crossref DOI metadata obtained through doi.org is not Crossref search support. Gemini writing, model-backed relevance, Chinese retrieval and additional search providers remain deferred.
 
 ## Try it
 
@@ -48,4 +50,4 @@ Run these commands from `backend/`. Source search is part of the `drift` library
 `drift-sources` is its CLI executable, backed by `app/Sources.hs`. The source
 specs run in the main `drift-test` suite, with saved responses in `test/fixtures`.
 
-Required verification is offline: the saved-response specs, barrier-controlled actor timing/queue tests, and the fake-source real-process restart test prove deterministic source delivery, citation reconciliation and replay over the actual API/WebSocket/SQLite stack. Recorded frontend fixtures cover reference/source rendering; they do not prove live external search quality. Real Wikipedia/OpenAlex smoke is optional and non-gating. No model-quality claim follows from these checks.
+Required verification is offline: the saved-response specs, barrier-controlled actor timing/queue tests, and the fake-source real-process restart test prove deterministic source delivery, citation reconciliation and replay over the actual API/WebSocket/SQLite stack. Recorded frontend fixtures cover reference/source rendering; they do not prove live external search quality. The real-provider smoke (one `tide → moon` search through whichever providers that edge draws) is optional and non-gating. No model-quality claim follows from these checks.
