@@ -152,6 +152,8 @@ data ActorState = ActorState
   , stateWritingStarted :: Set.Set NodeId
   , stateOutputsStarted :: Bool
     -- ^ the outputs worker was started for this wrapped-up session
+  , stateOutputFailures :: Int
+    -- ^ failed output attempts; the first failure is retried automatically
   }
 
 -- | A manager whose sessions start from the offline cloud ("Drift.Model.SessionMock").
@@ -321,7 +323,7 @@ startActor manager sid history = do
   let logValue = Log (reverse history)
       session = replay logValue
       initial = ActorState session logValue (length history) Map.empty 0
-        session.sessionNextCandidateId Nothing [] Set.empty False
+        session.sessionNextCandidateId Nothing [] Set.empty False 0
   -- Registry mutation stays masked; the actor itself runs unmasked.
   thread <- asyncWithUnmask $ \unmask ->
     unmask ((recoverWriting inbox initial >>= startOutputs inbox >>= loop inbox)
@@ -350,6 +352,8 @@ startActor manager sid history = do
           active <- readTVarIO subscription.subscriptionActive
           next <- if not active then pure current else case decide current.stateSession message.command of
             Left rejection -> reject subscription message.req rejection >> pure current
+            -- A repeated WrapUp records nothing, but retries outputs that failed.
+            Right [] | WrapUp <- message.command -> startOutputs inbox current
             Right [] -> pure current
             Right events -> do
               persisted <- commit current events
@@ -366,8 +370,16 @@ startActor manager sid history = do
           next <- case result of
             _ | Just _ <- current.stateSession.sessionOutputs -> pure current
             Left failure -> do
-              broadcast current (Diagnostic LevelError ("The final outputs could not be made: " <> failure))
-              pure current
+              let failures = current.stateOutputFailures + 1
+                  reset = current {stateOutputsStarted = False, stateOutputFailures = failures}
+              if failures < 2
+                then do
+                  broadcast current (Diagnostic LevelWarning ("The final outputs could not be made, trying again: " <> failure))
+                  startOutputs inbox reset
+                else do
+                  broadcast current (Diagnostic LevelError
+                    ("The final outputs could not be made: " <> failure <> " Press Wrap up again to retry."))
+                  pure reset
             Right outputs -> commit current [OutputsReady outputs] >>= \case
               Nothing -> do
                 broadcast current (Diagnostic LevelError "Saving the final outputs failed.")

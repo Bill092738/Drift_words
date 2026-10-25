@@ -31,7 +31,7 @@ import Drift.Model.Config
 import Drift.Model.OpenAICompat (RequestOptions (..))
 import Drift.Model.Provider (GenRequest (..), ModelProvider (..))
 import Drift.Model.SessionMock (BranchGenerator, mockBranches, mockCloud)
-import Drift.Output.Assemble (modelOutputs)
+import Drift.Output.Assemble (modelOutputs, orElseOutputs)
 import Drift.Output.Final (Generate)
 import Drift.Pipeline.Cloud (modelCloud)
 import Drift.Pipeline.BranchService (closeBranchService, newBranchService, withParallelPrefetch)
@@ -67,9 +67,11 @@ main = do
   staticDir <- maybe "../frontend/dist" id <$> lookupEnv "DRIFT_STATIC_DIR"
   frontend <- frontendApp staticDir
   finalModel <- loadFinalModel configPath
+  let outputsLog = hPutStrLn stderr . ("final outputs: " <>) . T.unpack
   outputs <-
     either (die . ("final outputs: " <>) . T.unpack) pure $
-      modelOutputs finalModel (hPutStrLn stderr . ("final outputs: " <>) . T.unpack)
+      -- If building the outputs throws, fall back to model-free outputs.
+      orElseOutputs <$> modelOutputs finalModel outputsLog <*> modelOutputs Nothing outputsLog
   withGenerator configPath prefetch $ \generator cloud -> withSources $ \sources -> do
     putStrLn (if writing then "writing: deterministic template" else "writing: disabled")
     putStrLn ("drift-server listening on http://localhost:" <> show port)

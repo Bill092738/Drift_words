@@ -175,21 +175,58 @@ spec = describe "Wrap-up outputs" $ do
         drain sub `shouldReturn` []
         readMVar calls `shouldReturn` 1
 
-    it "reports a failing generator and keeps the session usable" $ do
+    it "retries a failing generator once, then reports it and keeps the session usable" $ do
       withOutputsManager (\_ -> throwIO (userError "disk on fire")) $ \store manager -> do
         sid <- createManagedSession manager En
         sub <- connected manager sid
         _ <- bounded (receive sub)
         submit sub (ClientMsg 1 WrapUp)
+        first <- collectDiagnostic sub
+        case first of
+          Just (Diagnostic level why) -> do
+            level `shouldBe` LevelWarning
+            Text.unpack why `shouldContain` "trying again"
+          other -> expectationFailure ("expected a retry warning, got " <> show other)
         msgs <- collectDiagnostic sub
         case msgs of
           Just (Diagnostic level why) -> do
             level `shouldBe` LevelError
             Text.unpack why `shouldContain` "disk on fire"
+            Text.unpack why `shouldContain` "Wrap up again"
           other -> expectationFailure ("expected a diagnostic, got " <> show other)
         storedOutputs manager sid `shouldReturn` OutputsNotReady
         Just stored <- loadEvents store sid
         [() | Stamped {event = OutputsReady {}} <- stored] `shouldBe` []
+
+    it "recovers when the generator fails once" $ do
+      calls <- newMVar (0 :: Int)
+      let flaky _ = do
+            n <- modifyMVar calls (\c -> pure (c + 1, c + 1))
+            if n == 1 then throwIO (userError "transient") else pure fakeOutputs
+      withOutputsManager flaky $ \_ manager -> do
+        sid <- createManagedSession manager En
+        sub <- connected manager sid
+        _ <- bounded (receive sub)
+        submit sub (ClientMsg 1 WrapUp)
+        events <- untilOutputs sub
+        [o | OutputsReady o <- events] `shouldBe` [fakeOutputs]
+        readMVar calls `shouldReturn` 2
+
+    it "lets a second wrap-up retry after both attempts failed" $ do
+      calls <- newMVar (0 :: Int)
+      let failTwice _ = do
+            n <- modifyMVar calls (\c -> pure (c + 1, c + 1))
+            if n <= 2 then throwIO (userError "down") else pure fakeOutputs
+      withOutputsManager failTwice $ \_ manager -> do
+        sid <- createManagedSession manager En
+        sub <- connected manager sid
+        _ <- bounded (receive sub)
+        submit sub (ClientMsg 1 WrapUp)
+        _ <- collectDiagnostic sub
+        _ <- collectDiagnostic sub
+        submit sub (ClientMsg 2 WrapUp)
+        events <- untilOutputs sub
+        [o | OutputsReady o <- events] `shouldBe` [fakeOutputs]
 
     it "makes the outputs of a wrapped-up session that was stopped before it had them" $
       withDatabase $ \path -> do
