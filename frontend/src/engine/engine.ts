@@ -9,6 +9,7 @@ import type {
   SpringConfig,
   Vec,
 } from './api.ts';
+import { onReducedMotionChange, reducedMotion } from '../a11y/preferences.ts';
 import { CameraImpl } from './camera.ts';
 import { motion, quality } from './config.ts';
 import { GestureRecognizer, wheelZoomFactor } from './gestures.ts';
@@ -96,11 +97,9 @@ export const createEngine: CreateEngine = async (host, options = {}) => {
     fling: (vx, vy) => camera.fling(vx, vy),
   });
 
-  // Reduced motion: follows the OS setting live.
-  const motionQuery =
-    typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
+  // Reduced motion: follows the OS setting and the app's own setting, live.
   const applyReducedMotion = (): void => {
-    const reduced = motionQuery?.matches ?? false;
+    const reduced = reducedMotion();
     camera.reducedMotion = reduced;
     if (reduced) camera.stopFling();
     for (const ref of springList) {
@@ -109,7 +108,8 @@ export const createEngine: CreateEngine = async (host, options = {}) => {
     }
   };
   applyReducedMotion();
-  motionQuery?.addEventListener('change', applyReducedMotion, { signal: abort.signal });
+  const offReducedMotion = onReducedMotionChange(applyReducedMotion);
+  abort.signal.addEventListener('abort', offReducedMotion);
 
   const local = (e: { clientX: number; clientY: number }): Vec => {
     const r = app.canvas.getBoundingClientRect();

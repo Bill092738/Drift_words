@@ -8,7 +8,8 @@ A 3-minute run that shows every part of Driftwords once. Rehearse it twice befor
 - [ ] `export OPENALEX_API_KEY=...` (free). Without it, every machine on the venue's IP address shares about 100 paper searches a day.
 - [ ] `make demo`, then open `http://localhost:8080/?live`. Add `&debug=1` if you want `window.__desk` in the console.
 - [ ] Close other tabs and turn off notifications. Use a browser window around 1440 × 900.
-- [ ] Check the `<>` diagnostics button in the corner: it should be empty.
+- [ ] Open `http://localhost:8080/?live&dev` once and check **Diagnostics** in the top-left bar: it should be empty. Then record without `?dev`, so the bar shows only the name and the help button.
+- [ ] In the help popover, leave the Accessibility switches off for the recording (they are kept per browser).
 
 ## The run (about 2 minutes on screen)
 
@@ -28,7 +29,7 @@ A 3-minute run that shows every part of Driftwords once. Rehearse it twice befor
 
 ## If the network fails
 
-- Reload with the toolbar set to **Interactive (mock)**. It needs no server or network and shows the desk, rings, notes and sources.
+- Open `/` without `?live`: it is the in-browser mock (**Interactive (mock)** in the `?dev` bar). It needs no server or network and shows the desk, rings, notes and sources.
 - Keep a recorded run of the live demo as the fallback video.
 
 ## Video outline (3 minutes)

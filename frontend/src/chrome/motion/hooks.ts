@@ -1,4 +1,11 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react';
+import {
+  getPreferences,
+  onReducedMotionChange,
+  type Preferences,
+  reducedMotion,
+  subscribePreferences,
+} from '../../a11y/preferences.ts';
 import type { SpringConfig } from '../../engine/api.ts';
 import { SpringValue } from '../../motion/spring.ts';
 
@@ -14,8 +21,14 @@ export function useMediaQuery(query: string): boolean {
   );
 }
 
+/** Reduced motion from the system or from the app's "Reduce motion" setting. */
 export function usePrefersReducedMotion(): boolean {
-  return useMediaQuery('(prefers-reduced-motion: reduce)');
+  return useSyncExternalStore(onReducedMotionChange, reducedMotion, () => false);
+}
+
+/** The accessibility settings, re-rendering when one changes. */
+export function usePreferences(): Preferences {
+  return useSyncExternalStore(subscribePreferences, getPreferences, getPreferences);
 }
 
 /**

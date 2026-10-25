@@ -9,6 +9,7 @@ import type { SessionStore } from '../store/store.ts';
 import { rng } from '../transport/wordbank.ts';
 import { angleOf, cloudLayout, placeChild, placeSource, polar, RING_RADIUS, ringAngle } from './layout.ts';
 import { SourceObject } from './SourceObject.ts';
+import { onReducedMotionChange, reducedMotion, subscribePreferences } from '../a11y/preferences.ts';
 import { readTheme, type DeskTheme } from './theme.ts';
 import { WordTile } from './WordTile.ts';
 
@@ -67,8 +68,8 @@ export class DeskScene {
   private readonly sources = new Map<SourceId, SourceObject>();
   /** The source lifted toward the viewer; a second tap opens it. */
   private focusedSource: SourceId | null = null;
-  /** Follows the system setting live; when set, nothing orbits or drifts. */
-  private reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  /** Follows the system and app settings live; when set, nothing orbits or drifts. */
+  private reducedMotion = reducedMotion();
 
   private readonly baseZoom: number;
   private prev: SessionState | null = null;
@@ -95,12 +96,13 @@ export class DeskScene {
     };
     scheme.addEventListener('change', retheme);
     this.disposers.push(() => scheme.removeEventListener('change', retheme));
-    const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const onMotion = () => {
-      this.reducedMotion = motion.matches;
-    };
-    motion.addEventListener('change', onMotion);
-    this.disposers.push(() => motion.removeEventListener('change', onMotion));
+    // High contrast and larger text change the theme tokens.
+    this.disposers.push(subscribePreferences(retheme));
+    this.disposers.push(
+      onReducedMotionChange(() => {
+        this.reducedMotion = reducedMotion();
+      }),
+    );
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') this.focusSource(null);
     };

@@ -1,19 +1,76 @@
+/*
+ * Design tokens. Every stylesheet uses these; nothing else hard-codes a font,
+ * size, radius or color. The type ramp and radii follow Apple's platform
+ * guidelines; sizes scale with --text-scale (the "Larger text" setting).
+ */
 :root {
-  --font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* San Francisco where the system has it, Inter (bundled) everywhere else. */
+  --font: -apple-system, BlinkMacSystemFont, 'Inter Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-serif: ui-serif, 'New York', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  --text-scale: 1;
+  --fs-11: calc(11px * var(--text-scale));
+  --fs-12: calc(12px * var(--text-scale));
+  --fs-13: calc(13px * var(--text-scale));
+  --fs-15: calc(15px * var(--text-scale));
+  --fs-17: calc(17px * var(--text-scale));
+  --fs-20: calc(20px * var(--text-scale));
+  --fs-22: calc(22px * var(--text-scale));
+
+  --r-xs: 6px;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-pill: 999px;
+
+  /* Control heights: small (inside rows and bars) and regular. */
+  --h-sm: 28px;
+  --h-md: 32px;
+
   --bg: #f4f3ef;
   --desk-dot: #dcd9d1;
   --surface: #ffffff;
-  --surface-hover: #f7f7f5;
+  --surface-hover: #f5f5f3;
   --fg: #1d1d1f;
   --fg-secondary: #3a3a3e;
-  --muted: #76767c;
+  --muted: #6e6e73;
   --line: #e4e2dc;
   --line-soft: #efede8;
-  --chip: #f0efeb;
+  --chip: #efeeea;
+  --chip-hover: #e6e5e0;
   --accent: #3466f0;
+  --accent-hover: #2a58d8;
   --accent-soft: rgb(52 102 240 / 0.1);
+  --on-accent: #ffffff;
+  --danger: #d92d20;
+  --warning: #b25000;
+  --focus-ring: 0 0 0 3px rgb(52 102 240 / 0.35);
+
+  /* Translucent floating surfaces over the desk, like macOS materials. */
+  --material: rgb(255 255 255 / 0.72);
+  --material-strong: rgb(255 255 255 / 0.86);
+  --material-filter: blur(24px) saturate(180%);
+  --backdrop: rgb(20 20 24 / 0.22);
+
   --shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 4px 12px rgb(0 0 0 / 0.06);
   --shadow-lifted: 0 2px 6px rgb(0 0 0 / 0.06), 0 16px 40px rgb(0 0 0 / 0.12);
+
+  /*
+   * Spring curves for CSS, sampled from the engine's presets (engine/api.ts:
+   * response, damping fraction) so DOM and canvas move alike. Use each with
+   * its duration: the time the spring takes to settle.
+   */
+  --ease-smooth: linear(0, 0.0309, 0.1029, 0.1948, 0.2911, 0.3878, 0.4783, 0.5601, 0.6322, 0.6947, 0.7482, 0.7933, 0.8304, 0.862, 0.888, 0.9095, 0.927, 0.9413, 0.9529, 0.9623, 0.9697, 0.9758, 0.9807, 0.9846, 0.9878, 0.9903, 0.9923, 0.9939, 0.9952, 0.9962, 0.997, 0.9976, 1);
+  --dur-smooth: 750ms;
+  --ease-snappy: linear(0, 0.0223, 0.0734, 0.146, 0.2249, 0.3114, 0.397, 0.4748, 0.5507, 0.6196, 0.6783, 0.7327, 0.7777, 0.8185, 0.8531, 0.8809, 0.9054, 0.9256, 0.9414, 0.9549, 0.9653, 0.9741, 0.981, 0.9862, 0.9904, 0.9936, 0.9959, 0.9977, 0.999, 0.9999, 1.0005, 1.0009, 1);
+  --dur-snappy: 330ms;
+  --ease-bouncy: linear(0, 0.0455, 0.1552, 0.3009, 0.4535, 0.5996, 0.7292, 0.839, 0.9232, 0.985, 1.027, 1.0527, 1.0648, 1.0673, 1.0634, 1.0553, 1.0455, 1.0352, 1.0255, 1.0168, 1.0098, 1.0044, 1.0004, 0.9978, 0.9963, 0.9956, 0.9955, 0.9958, 0.9964, 0.997, 0.9978, 0.9984, 1);
+  --dur-bouncy: 820ms;
+  /* For things leaving: they accelerate away rather than spring. */
+  --ease-out-quick: cubic-bezier(0.4, 0, 1, 1);
+  --dur-exit: 180ms;
+
   font-family: var(--font);
   color-scheme: light;
 }
@@ -30,12 +87,86 @@
     --line: #2e2e33;
     --line-soft: #26262a;
     --chip: #2a2a2f;
+    --chip-hover: #333339;
     --accent: #7c9cff;
+    --accent-hover: #93adff;
     --accent-soft: rgb(124 156 255 / 0.14);
+    --on-accent: #0b1430;
+    --danger: #ff6961;
+    --warning: #ffb340;
+    --focus-ring: 0 0 0 3px rgb(124 156 255 / 0.45);
+    --material: rgb(30 30 34 / 0.72);
+    --material-strong: rgb(30 30 34 / 0.86);
+    --backdrop: rgb(0 0 0 / 0.45);
     --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 12px rgb(0 0 0 / 0.3);
     --shadow-lifted: 0 2px 6px rgb(0 0 0 / 0.4), 0 16px 40px rgb(0 0 0 / 0.5);
     color-scheme: dark;
   }
+}
+
+/* Accessibility settings (a11y/preferences.ts sets these attributes). */
+
+:root[data-text='large'] {
+  --text-scale: 1.2;
+}
+
+/* High contrast: darker text and borders, opaque surfaces, a bolder focus ring. */
+:root[data-contrast='high'] {
+  --desk-dot: #b8b5ac;
+  --fg-secondary: #1d1d1f;
+  --muted: #3c3c41;
+  --line: #8a8a8e;
+  --line-soft: #b8b8bd;
+  --chip: #e2e2e5;
+  --chip-hover: #d4d4d8;
+  --accent: #1f4fd6;
+  --accent-hover: #173fb0;
+  --accent-soft: rgb(31 79 214 / 0.16);
+  --danger: #b0170d;
+  --warning: #8a3d00;
+  --focus-ring: 0 0 0 3px #1f4fd6;
+  --material: var(--surface);
+  --material-strong: var(--surface);
+  --material-filter: none;
+  --backdrop: rgb(0 0 0 / 0.5);
+  --shadow: 0 0 0 1px #8a8a8e, 0 4px 12px rgb(0 0 0 / 0.12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-contrast='high'] {
+    --bg: #000000;
+    --surface: #111113;
+    --desk-dot: #4a4a50;
+    --fg: #ffffff;
+    --fg-secondary: #f2f2f4;
+    --muted: #c7c7cc;
+    --line: #8e8e93;
+    --line-soft: #636366;
+    --chip: #2c2c30;
+    --chip-hover: #3a3a3f;
+    --accent: #a3bbff;
+    --accent-hover: #c0d0ff;
+    --accent-soft: rgb(163 187 255 / 0.2);
+    --danger: #ff8a80;
+    --warning: #ffc266;
+    --focus-ring: 0 0 0 3px #a3bbff;
+    --shadow: 0 0 0 1px #8e8e93;
+  }
+}
+
+/* Reduced motion from the app setting, on top of the system media query. */
+:root[data-motion='reduce'] *,
+:root[data-motion='reduce'] *::before,
+:root[data-motion='reduce'] *::after {
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 1ms !important;
+  scroll-behavior: auto !important;
+}
+
+:root[data-motion='reduce'] .spinner {
+  animation-duration: 2.4s !important;
+  animation-iteration-count: infinite !important;
 }
 
 * {
@@ -52,7 +183,9 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
+  font-size: var(--fs-13);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 button,
@@ -65,89 +198,202 @@ select {
   color: var(--muted);
 }
 
-/* Dev toolbar */
+/* Text for screen readers only. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
 
-.dev-toolbar {
-  position: fixed;
-  top: 16px;
-  left: 16px;
-  display: flex;
-  flex-wrap: wrap;
+.icon {
+  display: block;
+  flex: none;
+}
+
+/*
+ * Buttons. Three kinds, as on Apple platforms:
+ *   .btn.btn-primary    filled accent, for the one main action in a place
+ *   .btn.btn-secondary  gray fill, for everything else
+ *   .icon-button        borderless, a gray fill appears on hover
+ * All of them dim on hover, shrink a little while pressed, and show the same
+ * focus ring.
+ */
+.btn,
+.icon-button {
+  --press-scale: 0.97;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  max-width: calc(100vw - 32px);
-  padding: 6px 8px 6px 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  font-size: 12px;
-  z-index: 10;
-}
-
-.dev-toolbar strong {
-  font-weight: 650;
-}
-
-.dev-toolbar-status {
-  font-size: 12px;
-  opacity: 0.7;
-}
-
-.dev-toolbar select,
-.dev-toolbar button,
-.dev-toolbar a {
-  padding: 4px 8px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--surface);
+  justify-content: center;
+  gap: 6px;
+  border: none;
   color: var(--fg);
-  font-size: 12px;
-  text-decoration: none;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background-color 200ms ease,
+    color 200ms ease,
+    box-shadow 200ms ease,
+    scale var(--dur-snappy) var(--ease-snappy);
 }
 
-.dev-diagnostics {
-  position: fixed;
-  top: 68px;
-  left: 16px;
-  width: min(460px, calc(100vw - 32px));
-  max-height: min(360px, calc(100vh - 84px));
-  overflow: auto;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
+.btn {
+  height: var(--h-md);
+  padding: 0 16px;
+  border-radius: var(--r-pill);
+  font: 600 var(--fs-13) / 1 var(--font);
+  white-space: nowrap;
+}
+
+.btn-sm {
+  height: var(--h-sm);
+  padding: 0 12px;
+  font-size: var(--fs-12);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn-secondary {
+  background: var(--chip);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--chip-hover);
+}
+
+.icon-button {
+  width: var(--h-md);
+  height: var(--h-md);
+  padding: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.icon-button:hover:not(:disabled) {
+  background: var(--chip);
+  color: var(--fg);
+}
+
+.btn:active:not(:disabled),
+.icon-button:active:not(:disabled) {
+  scale: var(--press-scale);
+  transition-duration: 160ms, 160ms, 160ms, 80ms;
+}
+
+.btn:disabled,
+.icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+:where(button, a, input, select, summary, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/*
+ * The segmented control (Path / Priority, the outputs tabs). Segments share the
+ * width equally, and one thumb slides under the selected one: set --count and
+ * --index on the control.
+ */
+.segmented {
+  --count: 2;
+  --index: 0;
+  position: relative;
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  padding: 2px;
+  border-radius: var(--r-sm);
+  background: var(--chip);
+  isolation: isolate;
+}
+
+.segmented::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / var(--count));
+  border-radius: 8px;
   background: var(--surface);
-  box-shadow: var(--shadow-lifted);
-  font: 12px/1.45 ui-monospace, 'SF Mono', Menlo, monospace;
-  z-index: 10;
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.1),
+    0 0 0 0.5px rgb(0 0 0 / 0.04);
+  translate: calc(100% * var(--index)) 0;
+  transition: translate var(--dur-snappy) var(--ease-snappy);
 }
 
-.dev-diagnostics header {
-  margin-bottom: 8px;
-  font-family: var(--font);
-  font-weight: 650;
+.segmented button {
+  height: 24px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: 500 var(--fs-12) / 1 var(--font);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 200ms ease;
 }
 
-.dev-diagnostics-empty,
-.dev-diagnostics-list {
-  margin: 0;
+.segmented button:hover {
+  color: var(--fg);
 }
 
-.dev-diagnostics-list {
-  padding-left: 24px;
+.segmented button[aria-checked='true'],
+.segmented button[aria-selected='true'] {
+  color: var(--fg);
+  font-weight: 600;
 }
 
-.dev-diagnostics-list li + li {
-  margin-top: 6px;
+/* Floating chrome over the desk: translucent, blurring what lies beneath. */
+.material {
+  background: var(--material);
+  -webkit-backdrop-filter: var(--material-filter);
+  backdrop-filter: var(--material-filter);
 }
 
-.dev-diagnostics-list li[data-level='warning'] strong {
-  color: #b66a00;
+/* For surfaces with reading text, such as the notes panel. */
+.material.material-strong {
+  background: var(--material-strong);
 }
 
-.dev-diagnostics-list li[data-level='error'] strong {
-  color: #c73333;
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .material,
+  .material.material-strong {
+    background: var(--surface);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn,
+  .icon-button,
+  .segmented button,
+  .segmented::before {
+    transition: none;
+  }
+
+  .btn:active:not(:disabled),
+  .icon-button:active:not(:disabled) {
+    scale: none;
+  }
 }
 
 /* M0 event log view (?view=log) */

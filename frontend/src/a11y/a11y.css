@@ -1,0 +1,82 @@
+/*
+ * The word list sits below the app bar. Without the "Word list" setting it is
+ * off screen until a keyboard user tabs into it, like a skip link.
+ */
+.word-list {
+  position: fixed;
+  top: 72px;
+  left: 16px;
+  width: 240px;
+  max-height: calc(100vh - 180px);
+  overflow-y: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lifted);
+  z-index: 12;
+}
+
+:root:not([data-word-list='on']) .word-list:not(:focus-within) {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.word-list-heading {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font: 600 var(--fs-11) / 1.4 var(--font);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.word-list-heading:not(:first-child) {
+  margin-top: 14px;
+}
+
+.word-list-empty {
+  margin: 0;
+  color: var(--muted);
+  font: 400 var(--fs-13) / 1.4 var(--font);
+}
+
+.word-list-words,
+.word-list-path {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.word-list button,
+.word-list-path span {
+  display: inline-flex;
+  align-items: center;
+  height: var(--h-sm);
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--surface);
+  color: var(--fg);
+  font: 500 var(--fs-13) / 1 var(--font);
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+
+.word-list button:hover {
+  background: var(--chip);
+}
+
+.word-list-path span {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+  cursor: default;
+}

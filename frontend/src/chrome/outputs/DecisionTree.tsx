@@ -1,5 +1,6 @@
 import type { Origin } from '../../protocol/index.ts';
 import type { TreeRow } from '../../store/tree.ts';
+import { icons } from '../icons.tsx';
 
 const ORIGIN_NOTE: Partial<Record<Origin, string>> = {
   startWord: 'typed to start',
@@ -24,7 +25,12 @@ function Row({ row, depth }: { row: TreeRow; depth: number }) {
   return (
     <li data-back={row.afterBacktrack || undefined}>
       <details open={depth < 6}>
-        <summary>{label}</summary>
+        <summary>
+          <span className="tree-fold">
+            <icons.chevronRight size={12} />
+          </span>
+          {label}
+        </summary>
         <ul>
           {row.children.map((child) => (
             <Row key={child.id} row={child} depth={depth + 1} />

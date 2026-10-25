@@ -1,17 +1,25 @@
 import { useEffect, useRef, useState } from 'react';
 import type { StoreApi } from 'zustand/vanilla';
+import { AccessibilitySettings } from './a11y/AccessibilitySettings.tsx';
+import { WordList } from './a11y/WordList.tsx';
 import { Controls } from './chrome/controls/Controls.tsx';
+import { DeskLoading, DeskLoadingPlaceholder } from './chrome/feedback/DeskLoading.tsx';
+import { Toaster } from './chrome/feedback/Toaster.tsx';
 import { OutputsHost } from './chrome/outputs/OutputsHost.tsx';
+import { type Connection, ConnectionPill } from './chrome/shell/ConnectionPill.tsx';
+import { HelpPopover } from './chrome/shell/HelpPopover.tsx';
+import './chrome/shell/shell.css';
 import { Sidebar } from './chrome/sidebar/Sidebar.tsx';
 import { Desk } from './desk/Desk.tsx';
 import type { DeskScene } from './desk/DeskScene.ts';
+import { devMode } from './devMode.ts';
 import { createSessionStore, type SessionStore, useSession } from './store/store.ts';
 import { fixtures } from './transport/fixtures.ts';
 import { createLiveSession, sessionFromUrl, setSessionInUrl, wantsLive } from './transport/live.ts';
 import { answerDeterministic, MockTransport } from './transport/mock.ts';
 import { MockServer } from './transport/mockServer.ts';
 import type { Transport } from './transport/transport.ts';
-import { type ConnectionStatus, WebSocketTransport } from './transport/ws.ts';
+import { WebSocketTransport } from './transport/ws.ts';
 
 const INTERACTIVE = 'interactive';
 const LIVE = 'live';
@@ -31,17 +39,14 @@ function Diagnostics({ store }: { store: StoreApi<SessionStore> }) {
   );
 }
 
-const STATUS_LABELS: Record<ConnectionStatus, string> = {
-  connecting: 'Connecting…',
-  open: 'Connected',
-  reconnecting: 'Reconnecting…',
-};
-
 /**
  * The app. "live" talks to drift-server over WebSocket; the session id is kept
  * in the URL (`?session=…`), so a reload resumes the same desk. "interactive"
  * runs an in-browser mock session that answers every command, and the other
  * modes replay recorded fixtures; both work without a backend.
+ *
+ * The bar at the top left shows the name and help. In developer mode (see
+ * devMode.ts) it also holds the session-source tools.
  */
 export function App() {
   const modes = [INTERACTIVE, LIVE, ...fixtures.keys()];
@@ -50,7 +55,7 @@ export function App() {
   const [run, setRun] = useState(0);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [store, setStore] = useState<StoreApi<SessionStore> | null>(null);
-  const [liveStatus, setLiveStatus] = useState<string | null>(null);
+  const [connection, setConnection] = useState<Connection>({ state: 'none' });
   // The live session's id, for the downloads the backend makes; null offline.
   const [liveSessionId, setLiveSessionId] = useState<string | null>(null);
   const [outputsOpen, setOutputsOpen] = useState(false);
@@ -68,7 +73,7 @@ export function App() {
       let cancelled = false;
       let cleanup = () => {};
       setStore(null);
-      setLiveStatus('Starting a session…');
+      setConnection({ state: 'starting' });
       const existing = sessionFromUrl();
       if (existing === null && creating.current?.run !== run) {
         creating.current = { run, id: createLiveSession('en') };
@@ -80,7 +85,7 @@ export function App() {
           setSessionInUrl(sessionId);
           setLiveSessionId(sessionId);
           const transport = WebSocketTransport.forSession(sessionId, {
-            onStatus: (status) => setLiveStatus(STATUS_LABELS[status]),
+            onStatus: (status) => setConnection({ state: status }),
           });
           const [s, detach] = createSessionStore(transport);
           setStore(s);
@@ -93,7 +98,7 @@ export function App() {
           if (cancelled) return;
           creating.current = null;
           const reason = error instanceof Error ? error.message : String(error);
-          setLiveStatus(`Backend unavailable (${reason}). Start drift-server with make server.`);
+          setConnection({ state: 'failed', reason: `(${reason})` });
         },
       );
       return () => {
@@ -101,7 +106,7 @@ export function App() {
         cleanup();
       };
     }
-    setLiveStatus(null);
+    setConnection({ state: 'none' });
     let transport: Transport;
     if (mode === INTERACTIVE) {
       transport = new MockServer({ seed: Date.now() % 100_000 });
@@ -132,9 +137,19 @@ export function App() {
     setRun((r) => r + 1);
   };
 
+  // After a failed start, try the same session again (or a new one).
+  const retry = () => setRun((r) => r + 1);
+
   return (
     <>
       {store && <Desk store={store} onScene={(scene) => (desk.current = scene)} />}
+      {store ? (
+        <DeskLoading store={store} />
+      ) : (
+        connection.state !== 'failed' && <DeskLoadingPlaceholder />
+      )}
+      {store && <Toaster store={store} />}
+      {store && <WordList store={store} />}
       {store && <Controls store={store} onWrapUp={() => setWrapRequested(true)} onViewOutputs={() => setOutputsOpen(true)} />}
       {store && (
         <OutputsHost
@@ -148,42 +163,58 @@ export function App() {
       {store && (
         <Sidebar key={`${mode}-${speed}-${run}`} store={store} onLocateSource={(id) => desk.current?.locateSource(id)} />
       )}
-      <div className="dev-toolbar" role="toolbar" aria-label="Session source">
-        <strong>Driftwords</strong>
-        <select value={mode} onChange={(e) => chooseMode(e.target.value)} aria-label="Session source">
-          {modes.map((m) => (
-            <option key={m} value={m}>
-              {m === INTERACTIVE ? 'Interactive (mock)' : m === LIVE ? 'Live (backend)' : `Replay: ${m}`}
-            </option>
-          ))}
-        </select>
-        {mode !== INTERACTIVE && mode !== LIVE && (
-          <select value={speed} onChange={(e) => setSpeed(Number(e.target.value))} aria-label="Speed">
-            {SPEEDS.map((s) => (
-              <option key={s} value={s}>
-                {s}×
-              </option>
-            ))}
-          </select>
+      <ConnectionPill connection={connection} onRetry={retry} />
+      <header className="app-bar material" role="toolbar" aria-label="Driftwords">
+        <span className="brand">
+          <img className="brand-mark" src="/favicon.svg" alt="" />
+          Driftwords
+        </span>
+        <HelpPopover>
+          <AccessibilitySettings />
+        </HelpPopover>
+        {devMode && (
+          <>
+            <span className="app-bar-divider" aria-hidden="true" />
+            <div className="dev-tools" aria-label="Developer tools">
+              <span className="dev-badge" title="Developer mode: the Vite dev server or ?dev">
+                DEV
+              </span>
+              <select value={mode} onChange={(e) => chooseMode(e.target.value)} aria-label="Session source">
+                {modes.map((m) => (
+                  <option key={m} value={m}>
+                    {m === INTERACTIVE ? 'Interactive (mock)' : m === LIVE ? 'Live (backend)' : `Replay: ${m}`}
+                  </option>
+                ))}
+              </select>
+              {mode !== INTERACTIVE && mode !== LIVE && (
+                <select value={speed} onChange={(e) => setSpeed(Number(e.target.value))} aria-label="Speed">
+                  {SPEEDS.map((s) => (
+                    <option key={s} value={s}>
+                      {s}×
+                    </option>
+                  ))}
+                </select>
+              )}
+              <button type="button" className="btn btn-secondary btn-sm" onClick={restart}>
+                {mode === LIVE ? 'New session' : 'Restart'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                aria-expanded={showDiagnostics}
+                aria-controls="dev-diagnostics"
+                onClick={() => setShowDiagnostics((shown) => !shown)}
+              >
+                Diagnostics
+              </button>
+              <a className="btn btn-secondary btn-sm" href="?view=log">
+                Event log
+              </a>
+            </div>
+          </>
         )}
-        <button onClick={restart}>{mode === LIVE ? 'New session' : 'Restart'}</button>
-        {liveStatus !== null && (
-          <span className="dev-toolbar-status" role="status">
-            {liveStatus}
-          </span>
-        )}
-        <button
-          type="button"
-          aria-expanded={showDiagnostics}
-          aria-controls="dev-diagnostics"
-          aria-label="Toggle diagnostics"
-          onClick={() => setShowDiagnostics((shown) => !shown)}
-        >
-          &lt;&gt;
-        </button>
-        <a href="?view=log">Event log</a>
-      </div>
-      {store && showDiagnostics && (
+      </header>
+      {devMode && store && showDiagnostics && (
         <aside id="dev-diagnostics" className="dev-diagnostics" aria-label="Diagnostics">
           <header>Diagnostics</header>
           <Diagnostics store={store} />

@@ -50,6 +50,8 @@ export class WordTile implements Drawable {
   private height = 0;
   private theme: DeskTheme;
   private delay = 0;
+  /** The dimness asked for by {@link dim}, before the high-contrast floor. */
+  private dimAlpha = 1;
 
   constructor(id: string, word: string, variant: TileVariant, at: Vec, theme: DeskTheme) {
     this.id = id;
@@ -102,13 +104,15 @@ export class WordTile implements Drawable {
     if (changedSize) this.redraw();
     else this.paint();
     this.scale.target = style[variant].scale;
-    this.alpha.target = style[variant].alpha;
+    this.dimAlpha = style[variant].alpha;
+    this.alpha.target = variant === 'faded' ? this.fadedAlpha(this.dimAlpha) : style[variant].alpha;
     this.view.zIndex = variant === 'current' ? 3 : variant === 'faded' ? 0 : variant === 'node' ? 2 : 1;
   }
 
   setTheme(theme: DeskTheme): void {
     this.theme = theme;
     this.redraw();
+    if (this.variant === 'faded' && this.alpha.target > 0) this.alpha.target = this.fadedAlpha(this.dimAlpha);
   }
 
   /** Moves toward `to` with the given spring. */
@@ -126,7 +130,14 @@ export class WordTile implements Drawable {
 
   /** Sets how visible a faded tile is (it fades further as the user moves on). */
   dim(alpha: number): void {
-    if (this.variant === 'faded') this.alpha.target = alpha;
+    if (this.variant !== 'faded') return;
+    this.dimAlpha = alpha;
+    this.alpha.target = this.fadedAlpha(alpha);
+  }
+
+  /** With high contrast, passed-over words stay readable, though still dimmer. */
+  private fadedAlpha(alpha: number): number {
+    return this.theme.highContrast ? Math.max(alpha * 2, 0.45) : alpha;
   }
 
   /** Shrinks the tile away; {@link gone} turns true once it has. */
@@ -158,8 +169,8 @@ export class WordTile implements Drawable {
   private redraw(): void {
     const s = style[this.variant];
     this.label.style = {
-      fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
-      fontSize: s.size,
+      fontFamily: this.theme.font,
+      fontSize: Math.round(s.size * this.theme.textScale),
       fontWeight: s.weight,
       fill: this.theme.fg,
     };
@@ -180,7 +191,11 @@ export class WordTile implements Drawable {
       .clear()
       .roundRect(-w / 2, -h / 2, w, h, RADIUS)
       .fill({ color: theme.surface })
-      .stroke({ width: current ? 2 : 1, color: current ? theme.accent : theme.line, alignment: 1 });
+      .stroke({
+        width: current ? (theme.highContrast ? 3 : 2) : theme.highContrast ? 1.5 : 1,
+        color: current ? theme.accent : theme.line,
+        alignment: 1,
+      });
     if (this.revisited && !current) {
       // A small dot on the left marks a revisited node.
       this.bg.circle(-w / 2 + 7, 0, 2.5).fill({ color: theme.accent });
