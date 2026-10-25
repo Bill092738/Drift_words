@@ -135,6 +135,145 @@ select {
   flex: none;
 }
 
+/*
+ * Buttons. Three kinds, as on Apple platforms:
+ *   .btn.btn-primary    filled accent, for the one main action in a place
+ *   .btn.btn-secondary  gray fill, for everything else
+ *   .icon-button        borderless, a gray fill appears on hover
+ * All of them dim on hover, shrink a little while pressed, and show the same
+ * focus ring.
+ */
+.btn,
+.icon-button {
+  --press-scale: 0.97;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: none;
+  color: var(--fg);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease,
+    scale 220ms var(--ease-snappy, ease);
+}
+
+.btn {
+  height: var(--h-md);
+  padding: 0 16px;
+  border-radius: var(--r-pill);
+  font: 600 var(--fs-13) / 1 var(--font);
+  white-space: nowrap;
+}
+
+.btn-sm {
+  height: var(--h-sm);
+  padding: 0 12px;
+  font-size: var(--fs-12);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn-secondary {
+  background: var(--chip);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--chip-hover);
+}
+
+.icon-button {
+  width: var(--h-md);
+  height: var(--h-md);
+  padding: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.icon-button:hover:not(:disabled) {
+  background: var(--chip);
+  color: var(--fg);
+}
+
+.btn:active:not(:disabled),
+.icon-button:active:not(:disabled) {
+  scale: var(--press-scale);
+  transition-duration: 160ms, 160ms, 160ms, 80ms;
+}
+
+.btn:disabled,
+.icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+:where(button, a, input, select, summary, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* The segmented control (Path / Priority, the outputs tabs). */
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: var(--r-sm);
+  background: var(--chip);
+}
+
+.segmented button {
+  height: 24px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: 500 var(--fs-12) / 1 var(--font);
+  cursor: pointer;
+  transition:
+    background-color 200ms ease,
+    color 200ms ease,
+    box-shadow 200ms ease;
+}
+
+.segmented button:hover {
+  color: var(--fg);
+}
+
+.segmented button[aria-checked='true'],
+.segmented button[aria-selected='true'] {
+  background: var(--surface);
+  color: var(--fg);
+  font-weight: 600;
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.1),
+    0 0 0 0.5px rgb(0 0 0 / 0.04);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn,
+  .icon-button,
+  .segmented button {
+    transition: none;
+  }
+
+  .btn:active:not(:disabled),
+  .icon-button:active:not(:disabled) {
+    scale: none;
+  }
+}
+
 /* Dev toolbar */
 
 .dev-toolbar {

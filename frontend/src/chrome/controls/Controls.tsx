@@ -85,7 +85,7 @@ export function Controls({ store, onWrapUp, onViewOutputs }: Props) {
     return (
       <div className="controls controls-wrapped">
         {hasOutputs ? (
-          <button type="button" className="outputs-open" onClick={onViewOutputs}>
+          <button type="button" className="btn btn-primary outputs-open" onClick={onViewOutputs}>
             View your outputs
           </button>
         ) : (
@@ -144,7 +144,7 @@ export function Controls({ store, onWrapUp, onViewOutputs }: Props) {
       {started && (
         <button
           type="button"
-          className="wrap-up"
+          className={`btn wrap-up ${confirming ? 'btn-primary' : 'btn-secondary'}`}
           data-confirming={confirming || undefined}
           onClick={wrapUp}
           aria-label={confirming ? 'Confirm wrap up' : 'Wrap up'}

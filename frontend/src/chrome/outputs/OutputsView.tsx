@@ -104,7 +104,7 @@ export function OutputsView({ store, sessionId, onClose }: Props) {
       <div className="outputs" role="dialog" aria-modal="true" aria-labelledby="outputs-title" ref={dialog}>
         <header className="outputs-head">
           <h2 id="outputs-title">Your outputs</h2>
-          <button type="button" className="outputs-close" onClick={onClose} ref={closeButton} aria-label="Close">
+          <button type="button" className="icon-button outputs-close" onClick={onClose} ref={closeButton} aria-label="Close">
             <icons.close />
           </button>
         </header>
@@ -158,13 +158,14 @@ export function OutputsView({ store, sessionId, onClose }: Props) {
 
         <footer className="outputs-foot">
           <span className="muted">Download {DOC_LABELS[tab].toLowerCase()}:</span>
-          <button type="button" onClick={() => void download('md')}>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => void download('md')}>
             Markdown
           </button>
           {SERVER_FORMATS.map(({ format, label }) => (
             <button
               key={format}
               type="button"
+              className="btn btn-secondary btn-sm"
               disabled={sessionId === null || busy !== null}
               title={sessionId === null ? 'Made by the backend: open a live session to use it' : undefined}
               onClick={() => void download(format)}
