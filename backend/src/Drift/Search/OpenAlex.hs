@@ -11,6 +11,7 @@ module Drift.Search.OpenAlex
   ( searchOpenAlex
   , parseOpenAlex
   , abstractFromIndex
+  , isPdfLink
   ) where
 
 import Data.Aeson (ToJSON (toJSON), Value, eitherDecode, object, withObject, (.:), (.:?), (.=))
@@ -21,10 +22,11 @@ import Data.Either (rights)
 import Data.List (sortOn)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Control.Monad (mfilter)
 import Data.Maybe (catMaybes, fromMaybe, mapMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Drift.Protocol (SourceKind (Paper))
+import Drift.Protocol (SourceKind (Paper, Pdf))
 import Drift.Search.Http (Fetch (..), FetchError (..), HttpRequest (..), HttpResponse (..))
 import Drift.Search.Text (doiUrl, normalizeDoi, plainText)
 import Drift.Search.Types (Hit (..), SourceDraft (..))
@@ -41,7 +43,7 @@ searchOpenAlex fetch apiKey query limit = do
         , reqQuery =
             [ ("search.title_and_abstract", query)
             , ("per_page", T.pack (show limit))
-            , ("select", "id,doi,title,publication_year,type,language,relevance_score,authorships,primary_location,biblio,abstract_inverted_index")
+            , ("select", "id,doi,title,publication_year,type,language,relevance_score,authorships,primary_location,biblio,abstract_inverted_index,best_oa_location")
             ]
               <> [("api_key", k) | Just k <- [apiKey]]
         , reqHeaders = [("Accept", "application/json")]
@@ -69,12 +71,15 @@ workP rank = withObject "work" $ \o -> do
   location <- o .:? "primary_location" :: Parser (Maybe Value)
   biblio <- o .:? "biblio" :: Parser (Maybe Value)
   inverted <- o .:? "abstract_inverted_index" :: Parser (Maybe (Map Text [Int]))
+  openAccess <- o .:? "best_oa_location" :: Parser (Maybe Value)
   let names = mapMaybe authorName authorships
       journal = location >>= sourceName
       pages = biblio >>= pageRange
       doi = rawDoi >>= normalizeDoi
       cleanTitle = plainText <$> rawTitle
       abstractText = maybe "" abstractFromIndex inverted
+      -- An open-access PDF, when OpenAlex has one that really is a PDF.
+      pdf = mfilter isPdfLink (openAccess >>= field "pdf_url")
   pure $ case (doi, cleanTitle) of
     (Just d, Just t) | not (T.null t) ->
       let link = doiUrl d
@@ -96,10 +101,10 @@ workP rank = withObject "work" $ \o -> do
               { hitProvider = "openalex"
               , hitDraft =
                   SourceDraft
-                    { kind = Paper
+                    { kind = maybe Paper (const Pdf) pdf
                     , title = t
                     , site = journal
-                    , url = link
+                    , url = fromMaybe link pdf
                     , thumbnailUrl = Nothing
                     , csl = Just item
                     }
@@ -108,6 +113,16 @@ workP rank = withObject "work" $ \o -> do
               , hitRank = rank
               }
     _ -> Nothing
+
+-- | Whether an open-access link is the PDF itself rather than a landing page
+-- (OpenAlex's @pdf_url@ is sometimes a handle or repository page): the path
+-- ends in @.pdf@, or it is an arXiv @\/pdf\/@ link.
+isPdfLink :: Text -> Bool
+isPdfLink u =
+  let lower = T.toLower (T.strip u)
+      path = T.takeWhile (\c -> c /= '?' && c /= '#') lower
+   in ("https://" `T.isPrefixOf` lower || "http://" `T.isPrefixOf` lower)
+        && (".pdf" `T.isSuffixOf` path || "arxiv.org/pdf/" `T.isInfixOf` path)
 
 authorName :: Value -> Maybe Text
 authorName v = case parseEither (withObject "authorship" (\o -> o .: "author" >>= withObject "author" (.: "display_name"))) v of

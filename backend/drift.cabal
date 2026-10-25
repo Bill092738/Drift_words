@@ -49,6 +49,7 @@ library
     Drift.Pipeline.Writing
     Drift.Protocol
     Drift.Protocol.Options
+    Drift.Search.Commons
     Drift.Search.Http
     Drift.Search.OpenAlex
     Drift.Search.Text
@@ -151,6 +152,7 @@ test-suite drift-test
     BranchServiceSpec
     BranchesSpec
     CiteSpec
+    CommonsSpec
     CitationsSpec
     CslSpec
     DomainDecideSpec

@@ -19,6 +19,7 @@ import Data.List (nub)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Drift.Search.Text (stem, tokens)
+import Drift.Protocol (SourceKind (Audio, Image))
 import Drift.Search.Types (Hit (..), SourceDraft (..), SourceRequest (..))
 
 data Verdict = Verdict
@@ -65,7 +66,12 @@ heuristicVerdict req hit
         ("words found, " <> T.pack (show inContext) <> " of " <> T.pack (show (length context)) <> " context words")
   where
     wanted = dedupe (concatMap (map stem . tokens) (maybe [] pure req.fromWord <> [req.toWord]))
-    titleWords = map stem (tokens hit.hitDraft.title)
+    -- Commons file names are short; for images and audio the description
+    -- plays the part of the title.
+    titleText
+      | hit.hitDraft.kind `elem` [Image, Audio] = hit.hitDraft.title <> " " <> hit.hitSnippet
+      | otherwise = hit.hitDraft.title
+    titleWords = map stem (tokens titleText)
     textWords = map stem (tokens hit.hitSnippet) <> titleWords
     inTitle = length (filter (`elem` titleWords) wanted)
     inText = length (filter (`elem` textWords) wanted)

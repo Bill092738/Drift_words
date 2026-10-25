@@ -11,6 +11,10 @@ module Drift.Pipeline.Sources
   ( SourceEnv (..)
   , defaultSourceEnv
   , findSources
+  , WantedKind (..)
+  , kindWeights
+  , drawKinds
+  , edgeSeed
   , queryFor
   , dedupeKey
   , sanitize
@@ -18,7 +22,7 @@ module Drift.Pipeline.Sources
 
 import Control.Applicative ((<|>))
 import Control.Concurrent.Async (mapConcurrently)
-import Control.Concurrent.MVar (MVar, modifyMVar, newMVar)
+import Control.Concurrent.MVar (MVar, modifyMVar, newMVar, readMVar)
 import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
 import Control.Monad (forM_, unless, when)
 import Data.List (sortOn)
@@ -26,6 +30,9 @@ import Data.Maybe (catMaybes)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Bits (xor)
+import Data.Char (ord)
+import Drift.Search.Commons (CommonsMedia (..), searchCommons)
 import Drift.Search.Http (Fetch, FetchError)
 import Drift.Search.OpenAlex (searchOpenAlex)
 import Drift.Search.Text (isWebUrl, normalizeDoi, normalizeKey, normalizeUrl)
@@ -44,7 +51,46 @@ data SourceEnv = SourceEnv
   , envResolveCsl :: Bool
   -- ^ fetch exact CSL-JSON from doi.org for papers, falling back to OpenAlex's fields
   , envLog :: Text -> IO ()
+  , envKinds :: SourceRequest -> [WantedKind]
+  -- ^ which kinds of material an edge looks for first; see 'drawKinds'
+  , envFallback :: Bool
+  -- ^ when the wanted kinds leave places free, also ask the keyless providers
+  -- not asked yet (never OpenAlex, whose budget is metered)
   }
+
+-- | The kinds of material an edge can ask for, each served by one provider.
+data WantedKind = WantImage | WantWeb | WantPaper | WantAudio
+  deriving stock (Eq, Ord, Show, Enum, Bounded)
+
+-- | How often each kind is drawn. Audio matches least often, so it is rarest.
+kindWeights :: [(WantedKind, Double)]
+kindWeights = [(WantImage, 0.35), (WantWeb, 0.25), (WantPaper, 0.25), (WantAudio, 0.15)]
+
+-- | Draws @n@ different kinds by weight, without repeats, from a seed. The
+-- same seed always gives the same kinds, so tests and replays are stable.
+drawKinds :: Int -> Int -> [WantedKind]
+drawKinds n seed = go n (lcg seed) kindWeights
+  where
+    go 0 _ _ = []
+    go _ _ [] = []
+    go k r pool =
+      let total = sum (map snd pool)
+          target = fromIntegral (r `mod` 1000000) / 1000000 * total
+          pick = pickAt target pool
+       in pick : go (k - 1) (lcg r) (filter ((/= pick) . fst) pool)
+    pickAt _ [(w, _)] = w
+    pickAt t ((w, weight) : rest) = if t < weight then w else pickAt (t - weight) rest
+    pickAt _ [] = WantWeb
+    lcg x = (x * 1103515245 + 12345) `mod` 2147483648
+
+-- | A stable seed for an edge, from its words (FNV-1a over the path and the
+-- two words), so each edge gets its own mix and keeps it across restarts.
+edgeSeed :: SourceRequest -> Int
+edgeSeed req = fromInteger (T.foldl' step 2166136261 key `mod` 2147483648)
+  where
+    key = T.intercalate "\x1f" (req.pathWords <> catMaybes [req.fromWord, Just req.toWord])
+    step :: Integer -> Char -> Integer
+    step h c = ((h `xor` toInteger (ord c)) * 16777619) `mod` 4294967296
 
 defaultSourceEnv :: Fetch -> SourceEnv
 defaultSourceEnv fetch =
@@ -55,6 +101,8 @@ defaultSourceEnv fetch =
     , envMaxPerEdge = 2
     , envResolveCsl = True
     , envLog = \_ -> pure ()
+    , envKinds = drawKinds 2 . edgeSeed
+    , envFallback = True
     }
 
 -- | The words searched for: the parent word and the new word together.
@@ -97,26 +145,45 @@ candidateOrder c = (negate c.verdict.score, c.candidateHit.hitRank, c.providerIn
 findSources :: SourceEnv -> SourceRequest -> (SourceDraft -> IO ()) -> IO ()
 findSources env req emit = do
   chosen <- newMVar (Chosen 0 Set.empty)
-  results <- mapConcurrently (provider chosen) (zip [0 ..] providers)
-  let bests = [c | c : _ <- results]
-      rest = concat [cs | _ : cs <- results]
-  unless streaming $ forM_ (sortOn candidateOrder bests) (accept chosen)
-  forM_ (sortOn candidateOrder rest) (accept chosen)
+  let wanted = nubKinds (env.envKinds req)
+      primary = map providerFor wanted
+      -- Keyless providers not asked yet, for an edge whose wanted kinds came up short.
+      fallback = [providerFor k | k <- [WantWeb, WantImage, WantAudio], k `notElem` wanted]
+  env.envLog ("wanted kinds: " <> T.pack (show wanted))
+  searchRound chosen primary
+  remaining <- (\c -> env.envMaxPerEdge - c.count) <$> readMVar chosen
+  when (env.envFallback && remaining > 0 && not (null fallback)) $ do
+    env.envLog "fallback: searching the other free providers"
+    searchRound chosen fallback
   where
     query = queryFor req
 
-    providers :: [(Text, IO (Either FetchError [Hit]))]
-    providers =
-      [ ("wikipedia", searchWikipedia env.envFetch req.lang query 5)
-      , ("openalex", searchOpenAlex env.envFetch env.envOpenAlexKey query 6)
-      ]
+    nubKinds = foldr (\k acc -> if k `elem` acc then acc else k : acc) []
 
-    streaming = env.envMaxPerEdge >= length providers
+    providerFor :: WantedKind -> (Text, IO (Either FetchError [Hit]))
+    providerFor = \case
+      WantWeb -> ("wikipedia", searchWikipedia env.envFetch req.lang query 5)
+      WantPaper -> ("openalex", searchOpenAlex env.envFetch env.envOpenAlexKey query 6)
+      WantImage -> ("commons images", searchCommons env.envFetch CommonsImages query 6)
+      WantAudio -> ("commons audio", searchCommons env.envFetch CommonsAudio query 6)
+
+    -- Asks a set of providers at once. The best passing result of each comes
+    -- first (one of each kind rather than two of the same); free places are
+    -- then filled from the rest, in 'candidateOrder'.
+    searchRound :: MVar Chosen -> [(Text, IO (Either FetchError [Hit]))] -> IO ()
+    searchRound chosen providers = do
+      free <- (\c -> env.envMaxPerEdge - c.count) <$> readMVar chosen
+      let streaming = free >= length providers
+      results <- mapConcurrently (provider chosen streaming) (zip [0 ..] providers)
+      let bests = [c | c : _ <- results]
+          rest = concat [cs | _ : cs <- results]
+      unless streaming $ forM_ (sortOn candidateOrder bests) (accept chosen)
+      forM_ (sortOn candidateOrder rest) (accept chosen)
 
     -- Searches and judges one provider, and returns its passing results best
     -- first. When streaming, the best is accepted here, as soon as it is known.
-    provider :: MVar Chosen -> (Int, (Text, IO (Either FetchError [Hit]))) -> IO [Candidate]
-    provider chosen (index, (name, search)) = do
+    provider :: MVar Chosen -> Bool -> (Int, (Text, IO (Either FetchError [Hit]))) -> IO [Candidate]
+    provider chosen streaming (index, (name, search)) = do
       outcome <- safely search
       case outcome of
         Left e -> [] <$ env.envLog (name <> ": failed: " <> T.pack (show e))
