@@ -90,7 +90,7 @@ Prefetch makes about 12 extra requests per pick (6 rings and 6 embedding calls),
 
 ### Run the whole app
 
-`make app` builds the frontend and starts the server, which also serves the built frontend at `http://localhost:8080/` (set `DRIFT_STATIC_DIR` to serve another build). Choose **Live (backend)** in the toolbar, or open `/?live`. The session id is kept in the URL (`?session=...`), so reloading the page restores the same desk, and the page reconnects on its own if the server restarts. With `make dev` instead, the Vite dev server on :5173 proxies `/api` to the backend on :8080.
+`make app` builds the frontend and starts the server, which also serves the built frontend at `http://localhost:8080/` (set `DRIFT_STATIC_DIR` to serve another build). Open `/?live` for a live session (in developer mode, `?dev`, the top-left bar can also switch between Live (backend), the in-browser mock and fixture replays). The session id is kept in the URL (`?session=...`), so reloading the page restores the same desk, and the page reconnects on its own if the server restarts. With `make dev` instead, the Vite dev server on :5173 proxies `/api` to the backend on :8080.
 
 For local development with both processes running separately, use `./start.sh` on Linux/macOS or double-click `start.cmd` on Windows. Each launcher checks that `cabal`, `pnpm`, and the expected project files are available before starting the backend and frontend. The Windows launcher opens one Command Prompt window per service.
 
