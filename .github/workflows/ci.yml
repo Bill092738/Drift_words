@@ -19,6 +19,8 @@ jobs:
         with:
           ghc-version: '9.10.3'
           cabal-version: 'latest'
+          # Update below, where backend/cabal.project selects HTTPS Hackage.
+          cabal-update: false
 
       - name: Resolve dependencies
         run: |
