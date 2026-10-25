@@ -7,6 +7,10 @@
 #   make app        build the frontend and serve the whole app from the backend on :8080
 #   make demo       Gemini cloud/rings/embeddings/notes/final (needs GEMINI_API_KEY)
 
+# Local settings such as GEMINI_API_KEY (see .env.example). Plain KEY=value lines.
+-include .env
+export
+
 .PHONY: protocol check backend-build backend-test backend-restart-test frontend-install frontend-check server dev app demo
 
 protocol:
@@ -41,7 +45,7 @@ app:
 	cd backend && cabal run drift-server
 
 demo:
-	@test -n "$$GEMINI_API_KEY" || { echo "Set GEMINI_API_KEY first (export it in your shell; never commit it)."; exit 1; }
+	@test -n "$$GEMINI_API_KEY" || { echo "Set GEMINI_API_KEY first (in .env or your shell; never commit it)."; exit 1; }
 	cd frontend && pnpm build
 	@echo "Open http://localhost:8080/?live"
 	cd backend && DRIFT_CONFIG=config.gemini.yaml cabal run drift-server
