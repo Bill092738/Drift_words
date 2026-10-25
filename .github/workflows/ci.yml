@@ -19,8 +19,14 @@ jobs:
         with:
           ghc-version: '9.10.3'
           cabal-version: 'latest'
-          # Update below, where backend/cabal.project selects HTTPS Hackage.
+          # Configure the existing repository before updating its index.
           cabal-update: false
+
+      - name: Use HTTPS for Hackage
+        run: |
+          cabal_config="$(cabal path --config-file)"
+          sed -i 's|http://hackage.haskell.org/|https://hackage.haskell.org/|g' "$cabal_config"
+          grep -q 'url: https://hackage.haskell.org/' "$cabal_config"
 
       - name: Resolve dependencies
         run: |
