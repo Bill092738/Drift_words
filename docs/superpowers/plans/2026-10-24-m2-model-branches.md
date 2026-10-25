@@ -1,6 +1,8 @@
 # M2 Model Slot and Branch Pipeline Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status (October 24, 2026):** this plan is complete and merged into `main`; the boxes were ticked afterwards. Remaining work is tracked in [docs/todo/REMAINING.md](../../todo/REMAINING.md).
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Build the Haskell M2 model abstraction and latency-oriented branch generation pipeline, including an offline mock and the `drift-branches` tuning CLI.
 
@@ -35,9 +37,9 @@
 
 **Interfaces:** Produce provider/request/embedding types, model configuration and roles, deterministic mock, and OpenAI-compatible generation/embedding adapters.
 
-- [ ] Write and observe failing provider/config tests.
-- [ ] Implement the provider modules minimally.
-- [ ] Run focused tests and commit only Task 1 files.
+- [x] Write and observe failing provider/config tests.
+- [x] Implement the provider modules minimally.
+- [x] Run focused tests and commit only Task 1 files.
 
 ### Task 2: Pure Branch Generation and Selection
 
@@ -45,9 +47,9 @@
 
 **Interfaces:** Consume provider request/embedding types; produce prompt construction, streaming parsing, normalization, filtering, repeat cap, cosine distance, divergence bands, MMR, and branch generation.
 
-- [ ] Write and observe failing parser/selection tests.
-- [ ] Implement pure helpers and provider-driven generation minimally.
-- [ ] Run focused tests and commit only Task 2 files.
+- [x] Write and observe failing parser/selection tests.
+- [x] Implement pure helpers and provider-driven generation minimally.
+- [x] Run focused tests and commit only Task 2 files.
 
 ### Task 3: Preemptive Scheduler and Speculative Prefetch Cache
 
@@ -55,9 +57,9 @@
 
 **Interfaces:** Produce P0 through P3 job scheduling, cancellation/shutdown, and a one-shot thread-safe prefetch cache with stable priority/FIFO ordering.
 
-- [ ] Write and observe failing scheduling/prefetch tests.
-- [ ] Implement STM/async scheduling and cache minimally.
-- [ ] Run focused tests and commit only Task 3 files.
+- [x] Write and observe failing scheduling/prefetch tests.
+- [x] Implement STM/async scheduling and cache minimally.
+- [x] Run focused tests and commit only Task 3 files.
 
 ### Task 4: Cabal Integration and `drift-branches` CLI
 
@@ -65,7 +67,7 @@
 
 **Interfaces:** Consume Tasks 1 through 3 and provide a CLI with positional word, bounded `--divergence`, and optional `--config`.
 
-- [ ] Add failing parser and mock integration tests.
-- [ ] Wire modules, dependencies, CLI, and credential-free config into Cabal.
-- [ ] Run backend tests/build and mock CLI at divergence `0.1`, `0.7`, and `0.9`.
-- [ ] Run the full repository check and commit integration.
+- [x] Add failing parser and mock integration tests.
+- [x] Wire modules, dependencies, CLI, and credential-free config into Cabal.
+- [x] Run backend tests/build and mock CLI at divergence `0.1`, `0.7`, and `0.9`.
+- [x] Run the full repository check and commit integration.
