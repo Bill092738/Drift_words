@@ -6,7 +6,7 @@ Driftwords is a browser-based tool for the moments when you want to do something
 
 Language models and web search run in the background. You never talk to an AI.
 
-> **Status:** M1 to M8 are integrated. Gemini can generate the cloud, rings, embeddings and the final rewrite. Sources come from Wikipedia, OpenAlex (papers and open-access PDFs) and Wikimedia Commons (images and audio), with a different mix of kinds for each edge; search is on by default (`DRIFT_SOURCES=0` turns it off). M7 writes a persistent template note for every non-root edge, and M8 turns the tree, notes and citations into a decision tree, draft and final document with Markdown, HTML and Word downloads. Gemini note writing and model-backed relevance remain follow-ups; see [docs/todo/REMAINING.md](docs/todo/REMAINING.md). "Driftwords" is a working title.
+> **Status:** M1 to M8 are integrated. Gemini can generate the cloud, rings, embeddings and the final rewrite. Sources come from Wikipedia, OpenAlex (papers and open-access PDFs) and Wikimedia Commons (images and audio), with a different mix of kinds for each edge; search is on by default (`DRIFT_SOURCES=0` turns it off). M7 writes a persistent note for every non-root edge (by Gemini in the demo setup, a template without a model), and M8 turns the tree, notes and citations into a decision tree, draft and final document with Markdown, HTML and Word downloads. Model-backed relevance remains a follow-up; see [docs/todo/REMAINING.md](docs/todo/REMAINING.md). "Driftwords" is a working title.
 
 ## Documents
 
@@ -54,13 +54,15 @@ Create a session with `POST /api/sessions` and JSON body `{"lang":"en"}`. The fr
 
 By default the backend uses a deterministic offline vocabulary: a fixed initial word cloud and six branch words, each with the selected node ID appended, so sessions can continue at any depth without a model.
 
-Each non-root edge also gets one deterministic note, `fromWord → toWord`, with an empty explanation. Notes arrive quietly: the sidebar stays closed until opened. Promote, strike and restore are persisted. `DRIFT_WRITING=0` explicitly disables note production, including recovery of missing notes after restart; otherwise the template writer runs independently of `DRIFT_CONFIG`. A `writing` role does not enable model writing in this server. The provider-independent `EntryWriter` seam is ready for the separate Gemini integration.
+Each non-root edge also gets one note. When `DRIFT_CONFIG` has a `writing` role, that model writes it: a short relation and a one- or two-sentence explanation, citing the edge's sources by key; unknown keys are dropped. The note waits up to 3 s for the edge's sources, a failed call is retried once, and a second failure falls back to the template. Without a `writing` role the note is the deterministic template `fromWord → toWord` with an empty explanation. Notes arrive quietly: the sidebar stays closed until opened. Promote, strike and restore are persisted. `DRIFT_WRITING=0` explicitly disables note production, including recovery of missing notes after restart.
+
+At wrap-up, the outputs wait up to 30 s for notes that are still being written, so the note for the last pick reaches the draft and the final document. The final document keeps every note that is not struck; promoted notes are marked as important for the model.
 
 Source search is on by default: every non-root edge searches Wikipedia and OpenAlex. It needs no model configuration and no key; set `OPENALEX_API_KEY` to raise the OpenAlex daily budget, and `DRIFT_SOURCES=0` to turn search off (for example with no network). The server shares one HTTP cache and rate-limit environment, runs at most two edge searches with sixteen pending jobs, and skips the newest search with a warning when that queue is full. Its note is still written. Writing waits for search completion or 250ms, whichever comes first; later sources revise the note's citations. Search failures or zero results are normal and do not stop exploration. See [source behavior and limits](backend/sources/README.md).
 
 The frontend creates English sessions. Retrieval currently uses an English word-overlap heuristic, not semantic or model judgement. Crossref search, arXiv search, Commons retrieval, Chinese retrieval, model-backed relevance and Gemini writing/quality acceptance are deferred. Fixture references to those providers are recorded UI test data, not evidence of live provider support.
 
-For an offline session, leave `DRIFT_CONFIG` unset and set `DRIFT_SOURCES=0`; leave `DRIFT_WRITING` unset to keep template notes. The tests always start the server with `DRIFT_SOURCES=0`, so CI never calls the source APIs. Startup reports modes and whether an OpenAlex key is present, never the key value. HTTP diagnostics redact `api_key` values.
+For an offline session, leave `DRIFT_CONFIG` unset and set `DRIFT_SOURCES=0`; leave `DRIFT_WRITING` unset to keep template notes (they need no model). The tests always start the server with `DRIFT_SOURCES=0`, so CI never calls the source APIs. Startup reports modes and whether an OpenAlex key is present, never the key value. HTTP diagnostics redact `api_key` values.
 
 To generate rings with a model, set `DRIFT_CONFIG` to a model configuration (see `backend/config.gemini.yaml` and `backend/config.example.yaml`). Its `branches` role generates the rings, and its optional `embeddings` role drives divergence selection. After each ring, the server prefetches the ring of every offered word, so a pick usually finds its ring ready; set `DRIFT_PREFETCH=0` to save model calls. An optional `cloud` role makes each session's starting cloud; without it the cloud is the fixed offline list.
 
@@ -78,7 +80,7 @@ Open `http://localhost:8080/?live`. `backend/config.gemini.yaml` routes the role
 | Role | Model | Why |
 | --- | --- | --- |
 | `branches`, `cloud` | `gemini-3.1-flash-lite` | about 1.4 s per answer; rings and the cloud are on the critical path |
-| `writing` | `gemini-3.8-flash` | configured for future integration; current notes are deterministic templates |
+| `writing` | `gemini-3.8-flash` | writes the sidebar notes in the background (1.5 to 12 s each, one call per pick) |
 | `final` | `gemini-3.8-flash` | rewrites the M8 final document; falls back to kept note text on failure |
 | `embeddings` | `gemini-embedding-001` | divergence band; about 0.5 s per ring |
 
@@ -86,7 +88,7 @@ To put 3.8 Flash behind the rings too, set `branches: gemini` in that file. Expe
 
 `kind: gemini` in a model configuration is Gemini's OpenAI-compatible endpoint with the settings Gemini 3 needs: `reasoning_effort: low` (Gemini 3 cannot stop thinking, and 3.8 Flash rejects `minimal`), no `temperature`, no output-token limit (Gemini counts thinking tokens against it, so a small limit returns an empty answer), and parallel prefetch. Every provider accepts these as options: `reasoning_effort`, `send_temperature`, `limit_output_tokens`, `timeout_seconds` and `concurrent_requests`.
 
-Prefetch makes about 12 extra requests per pick (6 rings and 6 embedding calls), so a pick usually finds its ring ready (60 to 150 ms in testing, against about 1.5 s for a miss). Set `DRIFT_PREFETCH=0` to save quota.
+Prefetch makes about 12 extra requests per pick (6 rings and 6 embedding calls), so a pick usually finds its ring ready (60 to 150 ms in testing, against about 1.5 s for a miss). Set `DRIFT_PREFETCH=0` to save quota. Notes add one 3.8 Flash request per pick; remove the `writing` role to go back to template notes.
 
 ### Run the whole app
 

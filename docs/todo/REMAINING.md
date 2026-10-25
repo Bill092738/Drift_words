@@ -144,6 +144,6 @@ The backend just never sends `image`, `audio` or `pdf`.
 ## Not in this list: the Gemini branch
 
 These belong to the separate Gemini integration and are listed only to avoid duplicate work:
-- Notes written by Gemini 3.8 Flash. Replace `templateEntry` with `writeEntry` on the `writing` role, and lengthen the source wait (`sourceWaitMicros = 250000`) so a note can cite its edge's sources.
+- [x] Notes written by Gemini 3.8 Flash. Done on `feature/gemini-notes`: the `writing` role runs `writeEntry` with one retry, a model note waits up to 3 s for its sources, and wrap-up waits up to 30 s for unfinished notes. The final document now keeps every note that is not struck.
 - Divergence-band calibration for `gemini-embedding-001`. Distances between related words fall between 0.33 and 0.49.
 - An optional model-backed `RelevanceJudge` for sources.
