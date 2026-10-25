@@ -23,6 +23,8 @@ interface Props {
   /** The live session's id, for the server-made downloads; null offline. */
   sessionId: string | null;
   onClose: () => void;
+  /** True while the view plays its exit animation. */
+  closing?: boolean;
 }
 
 const SERVER_FORMATS: { format: Exclude<FileFormat, 'md'>; label: string }[] = [
@@ -35,7 +37,7 @@ const SERVER_FORMATS: { format: Exclude<FileFormat, 'md'>; label: string }[] = [
  * document, with downloads. Markdown is saved from the text on screen; HTML and
  * Word are made by the backend, so they need a live session.
  */
-export function OutputsView({ store, sessionId, onClose }: Props) {
+export function OutputsView({ store, sessionId, onClose, closing = false }: Props) {
   const outputs = useSession(store, (s) => s.state.outputs);
   const nodes = useSession(store, (s) => s.state.nodes);
   const [tab, setTab] = useState<DocKind>('final');
@@ -97,6 +99,7 @@ export function OutputsView({ store, sessionId, onClose }: Props) {
   return (
     <div
       className="outputs-backdrop"
+      data-closing={closing || undefined}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}

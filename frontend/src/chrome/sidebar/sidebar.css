@@ -5,7 +5,6 @@
   bottom: 16px;
   width: min(400px, calc(100vw - 32px));
   transform-origin: 100% 0;
-  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-lifted);
@@ -27,7 +26,6 @@
   border: 1px solid var(--line);
   border-right: none;
   border-radius: var(--r-md) 0 0 var(--r-md);
-  background: var(--surface);
   color: var(--fg);
   box-shadow: var(--shadow);
   font: 600 var(--fs-12) / 1 var(--font);
@@ -43,7 +41,7 @@
 }
 
 .sidebar-tab:hover {
-  background: var(--surface-hover);
+  background: var(--material-strong);
 }
 
 .tab-count {
@@ -120,7 +118,7 @@
   grid-template-areas: 'path actions' 'body actions';
   column-gap: 8px;
   padding: 12px 12px 12px 20px;
-  animation: entry-in 420ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+  animation: entry-in var(--dur-smooth) var(--ease-smooth) both;
 }
 
 .entry + .entry {
@@ -139,8 +137,8 @@
   background: var(--accent);
   opacity: calc(var(--level) * 0.16);
   transition:
-    width 240ms ease,
-    opacity 240ms ease;
+    width var(--dur-snappy) var(--ease-snappy),
+    opacity var(--dur-snappy) var(--ease-snappy);
 }
 
 @keyframes entry-in {
@@ -184,12 +182,12 @@
 }
 
 .entry-path .level[data-pending] {
-  animation: pulse 450ms ease;
+  animation: pulse var(--dur-bouncy) var(--ease-bouncy);
 }
 
 @keyframes pulse {
-  40% {
-    transform: scale(1.15);
+  from {
+    transform: scale(1.25);
   }
 }
 
@@ -377,7 +375,7 @@
 
 .sources-toggle .icon {
   margin-left: auto;
-  transition: rotate 200ms ease;
+  transition: rotate var(--dur-snappy) var(--ease-snappy);
 }
 
 .sources-toggle[aria-expanded='false'] .icon {
@@ -518,5 +516,10 @@
   .entry,
   .entry-path .level[data-pending] {
     animation: none;
+  }
+
+  .entry::before,
+  .sources-toggle .icon {
+    transition: none;
   }
 }

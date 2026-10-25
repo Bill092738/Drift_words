@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { StoreApi } from 'zustand/vanilla';
 import { springs } from '../../engine/api.ts';
 import type { SourceId } from '../../protocol/index.ts';
@@ -91,7 +91,7 @@ function SidePanel(props: {
     <>
       <button
         ref={tab}
-        className="sidebar-tab"
+        className="sidebar-tab material"
         onClick={props.onOpen}
         aria-expanded={props.open}
         aria-controls="sidebar-panel"
@@ -102,7 +102,14 @@ function SidePanel(props: {
         {props.entryCount > 0 && <span className="tab-count">{props.entryCount}</span>}
         {props.unseen > 0 && <span className="tab-badge" aria-label={`${props.unseen} new`} />}
       </button>
-      <aside ref={panel} id="sidebar-panel" className="sidebar-panel" aria-hidden={!props.open} inert={!props.open}>
+      <aside
+        ref={panel}
+        id="sidebar-panel"
+        className="sidebar-panel material material-strong"
+        aria-label="Notes"
+        aria-hidden={!props.open}
+        inert={!props.open}
+      >
         {props.children}
       </aside>
     </>
@@ -132,7 +139,12 @@ function SidebarContent(props: {
     <div className="sidebar">
       <header className="sidebar-header">
         <h2>Notes</h2>
-        <div className="segmented" role="radiogroup" aria-label="Order entries by">
+        <div
+          className="segmented"
+          role="radiogroup"
+          aria-label="Order entries by"
+          style={{ '--count': 2, '--index': props.order === 'path' ? 0 : 1 } as CSSProperties}
+        >
           {(['path', 'priority'] as const).map((o) => (
             <button key={o} role="radio" aria-checked={props.order === o} onClick={() => props.onOrder(o)}>
               {o === 'path' ? 'Path' : 'Priority'}

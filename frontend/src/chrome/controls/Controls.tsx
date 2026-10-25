@@ -83,7 +83,7 @@ export function Controls({ store, onWrapUp, onViewOutputs }: Props) {
 
   if (wrappedUp) {
     return (
-      <div className="controls controls-wrapped">
+      <div className="controls controls-wrapped material">
         {hasOutputs ? (
           <button type="button" className="btn btn-primary outputs-open" onClick={onViewOutputs}>
             View your outputs
@@ -98,7 +98,7 @@ export function Controls({ store, onWrapUp, onViewOutputs }: Props) {
   }
 
   return (
-    <div className="controls">
+    <div className="controls material">
       {notice && (
         <p className="notice" role="status">
           {notice}

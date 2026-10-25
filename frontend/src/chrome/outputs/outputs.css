@@ -5,6 +5,8 @@
   place-items: center;
   padding: 24px;
   background: var(--backdrop);
+  -webkit-backdrop-filter: blur(6px) saturate(140%);
+  backdrop-filter: blur(6px) saturate(140%);
   z-index: 40;
 }
 
@@ -21,16 +23,64 @@
   overflow: hidden;
 }
 
+/* In: the sheet grows from slightly smaller on a spring. Out: it fades away quickly. */
 @media (prefers-reduced-motion: no-preference) {
-  .outputs {
-    animation: outputs-in 160ms ease-out;
+  .outputs-backdrop {
+    animation: backdrop-in 240ms ease-out both;
   }
-  @keyframes outputs-in {
+
+  .outputs {
+    animation:
+      outputs-in var(--dur-snappy) var(--ease-snappy) both,
+      fade-in 160ms ease-out both;
+  }
+
+  .outputs-backdrop[data-closing] {
+    animation: backdrop-out var(--dur-exit) var(--ease-out-quick) both;
+  }
+
+  .outputs-backdrop[data-closing] .outputs {
+    animation: outputs-out var(--dur-exit) var(--ease-out-quick) both;
+  }
+
+  @keyframes backdrop-in {
     from {
-      opacity: 0;
-      transform: translateY(8px);
+      background-color: transparent;
+      -webkit-backdrop-filter: blur(0);
+      backdrop-filter: blur(0);
     }
   }
+
+  @keyframes backdrop-out {
+    to {
+      background-color: transparent;
+      -webkit-backdrop-filter: blur(0);
+      backdrop-filter: blur(0);
+    }
+  }
+
+  @keyframes outputs-in {
+    from {
+      transform: translateY(10px) scale(0.96);
+    }
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+
+  @keyframes outputs-out {
+    to {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+  }
+}
+
+.outputs-backdrop[data-closing] {
+  pointer-events: none;
 }
 
 @media (max-width: 720px) {
@@ -231,7 +281,7 @@
   width: 14px;
   align-self: center;
   color: var(--muted);
-  transition: rotate 200ms;
+  transition: rotate var(--dur-snappy) var(--ease-snappy);
 }
 
 .decision-tree details[open] > summary > .tree-fold {
