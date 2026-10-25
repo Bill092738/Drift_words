@@ -247,7 +247,7 @@ For each new edge (parent word to child word), a background job:
 - **The three outputs**, assembled as a pandoc AST:
   - **Decision tree:** derived directly from the log, including forks and backtracks. Emitted as JSON for the interactive view and as Mermaid inside the Markdown.
   - **Draft:** every entry in log order, with struck entries rendered struck through, and the full reference list.
-  - **Final:** only high-priority entries. Revisited nodes become section headings, and the model rewrites the outline into continuous prose under the same citation constraint. References are recomputed from what the final text actually cites.
+  - **Final:** every entry that is not struck; promoted entries are marked as important for the model. Revisited nodes become section headings, and the model rewrites the outline into continuous prose under the same citation constraint. References are recomputed from what the final text actually cites.
 - **Export:** Markdown by default, plus HTML and DOCX through pandoc. PDF can come from printing the HTML.
 
 ### 4.9 Persistence

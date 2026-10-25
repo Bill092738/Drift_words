@@ -1,10 +1,14 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 
--- | The final document: only the entries the user kept (not struck, at or above
--- a priority), reorganized into continuous prose, with references computed from
--- what that prose actually cites (TECH_ROADMAP.md 4.8 and 7.3, M8).
+-- | The final document: the entries the user kept (not struck), reorganized
+-- into continuous prose, with references computed from what that prose
+-- actually cites (TECH_ROADMAP.md 4.8 and 7.3, M8).
 --
+-- * Every entry that is not struck is kept by default ('minPriority' 0), so a
+--   user who never promotes anything still gets a final document. Promoted
+--   entries are marked as important in the prompt, so the model gives them
+--   more weight.
 -- * The walk is split into sections at each backtrack, and each section is
 --   headed by the first kept word in it. With a single section there are no
 --   headings.
@@ -57,13 +61,14 @@ type Generate = Text -> IO Text
 
 data FinalOptions = FinalOptions
   { minPriority :: Int
-  -- ^ entries below this are left out; 1 keeps every entry the user raised at least once
+  -- ^ entries below this are left out; 0 keeps every entry that is not struck,
+  -- 1 only those the user promoted at least once
   , maxReplyChars :: Int
   -- ^ longer replies are cut, so a runaway model cannot flood the document
   }
 
 defaultFinalOptions :: FinalOptions
-defaultFinalOptions = FinalOptions {minPriority = 1, maxReplyChars = 4000}
+defaultFinalOptions = FinalOptions {minPriority = 0, maxReplyChars = 4000}
 
 data FinalDoc = FinalDoc
   { finalText :: Text
@@ -131,6 +136,7 @@ sectionPrompt lang topic es srcs =
       <> sourceBlock
       <> [ ""
          , "Write one to three short paragraphs that connect the notes into a flowing passage."
+         , "Notes marked (important) were promoted by the user: give them the most weight."
          , "Use only what the notes say; add no new facts, names or numbers."
          , "Cite only with the source keys above, written like [@src1] or [@src1; @src2], right after the claim they support. Never invent a key."
          , "Plain prose only: no headings, lists, tables or code."
@@ -138,7 +144,8 @@ sectionPrompt lang topic es srcs =
          ]
   where
     note st =
-      "- " <> oneLine st.entry.relation <> ": " <> oneLine st.entry.explanation
+      "- " <> (if st.priority > 0 then "(important) " else "")
+        <> oneLine st.entry.relation <> ": " <> oneLine st.entry.explanation
         <> case nub st.entry.cites of
           [] -> ""
           ids -> " (sources: " <> T.intercalate ", " ["[@" <> sourceKey i <> "]" | i <- ids] <> ")"
@@ -229,7 +236,7 @@ finalMarkdown model opts style evs = do
         [] -> En
       title = "# " <> maybe "Final" capitalize (keptPathTitle evs)
   if null kept
-    then pure (FinalDoc (title <> "\n\n_No entries were kept at high priority._") [] [])
+    then pure (FinalDoc (title <> "\n\n_No entries were kept._") [] [])
     else do
       results <- mapM (runSection model opts lang sources allowed) sections
       let bodies = map fst results

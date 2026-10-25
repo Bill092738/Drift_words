@@ -36,6 +36,12 @@ fixtureLog = do
 retainedIds :: [Int]
 retainedIds = [1, 4, 5]
 
+-- | The old rule, promoted entries only. Most tests below use it, because the
+-- fixture's promoted subset is what their citation expectations are built on.
+-- The default (every entry that is not struck) has its own tests.
+promotedOnly :: FinalOptions
+promotedOnly = defaultFinalOptions {minPriority = 1}
+
 idOf :: EntryState -> Int
 idOf st = let EntryId n = st.entry.entryId in n
 
@@ -64,7 +70,7 @@ draftRefs :: Style (CslJson Text) -> [Stamped] -> Set.Set SourceId
 draftRefs st evs = Set.fromList (map fst (renderCitations st (sourcesOf evs) (map (\e -> e.entry.cites) (orderedEntries evs))).bibliography)
 
 keptCites :: [Stamped] -> Set.Set SourceId
-keptCites evs = Set.fromList [i | st <- retainedEntries defaultFinalOptions evs, i <- st.entry.cites, i `Map.member` sourcesOf evs]
+keptCites evs = Set.fromList [i | st <- retainedEntries promotedOnly evs, i <- st.entry.cites, i `Map.member` sourcesOf evs]
 
 stamped :: [Event] -> [Stamped]
 stamped = zipWith (\n e -> Stamped n 1700000000000 e) [1 ..]
@@ -72,19 +78,45 @@ stamped = zipWith (\n e -> Stamped n 1700000000000 e) [1 ..]
 spec :: Spec
 spec = describe "Drift.Output.Final" $ do
   describe "which entries are kept" $ do
-    it "keeps the promoted, un-struck entries of the fixture, in order" $ do
+    it "keeps every entry that is not struck by default, promoted or not" $ do
       evs <- fixtureLog
-      map idOf (retainedEntries defaultFinalOptions evs) `shouldBe` retainedIds
+      map idOf (retainedEntries defaultFinalOptions evs) `shouldBe` [1, 2, 4, 5]
+      let secs = sectionsOf evs (retainedEntries defaultFinalOptions evs)
+      map (map idOf . (.sectionEntries)) secs `shouldBe` [[1, 2], [4, 5]]
+
+    it "marks promoted entries as important in the prompt, and still sends the others" $ do
+      st <- style'
+      evs <- fixtureLog
+      (model, prompts) <- cannedModel
+      _ <- finalMarkdown (Just model) defaultFinalOptions st evs
+      ps <- T.concat <$> prompts
+      T.unpack ps `shouldContain` ("- (important) " <> T.unpack (fst (textOf evs 1)))
+      T.unpack ps `shouldContain` ("- " <> T.unpack (fst (textOf evs 2)))
+      T.unpack ps `shouldNotContain` ("(important) " <> T.unpack (fst (textOf evs 2)))
+      T.unpack ps `shouldNotContain` T.unpack (fst (textOf evs 3))
+
+    it "says so when every entry was struck" $ do
+      st <- style'
+      evs <- fixtureLog
+      let strikes = [EntryStruck (EntryId n) | n <- [1, 2, 4, 5]]
+          allStruck = evs <> zipWith (\n e -> Stamped n 1700000000000 e) [length evs + 1 ..] strikes
+      doc <- finalMarkdown (Just (\_ -> pure "never asked")) defaultFinalOptions st allStruck
+      T.unpack doc.finalText `shouldEndWith` "_No entries were kept._"
+      doc.finalReferences `shouldBe` []
+
+    it "keeps the promoted, un-struck entries of the fixture with minPriority 1, in order" $ do
+      evs <- fixtureLog
+      map idOf (retainedEntries promotedOnly evs) `shouldBe` retainedIds
 
     it "raises the bar with the minimum priority" $ do
       evs <- fixtureLog
       -- entries 1 and 5 were promoted by two levels, entry 4 by one
-      map idOf (retainedEntries defaultFinalOptions {minPriority = 2} evs) `shouldBe` [1, 5]
-      map idOf (retainedEntries defaultFinalOptions {minPriority = 3} evs) `shouldBe` []
+      map idOf (retainedEntries promotedOnly {minPriority = 2} evs) `shouldBe` [1, 5]
+      map idOf (retainedEntries promotedOnly {minPriority = 3} evs) `shouldBe` []
 
     it "splits the walk at the backtrack into the two sections the fixture shows" $ do
       evs <- fixtureLog
-      let secs = sectionsOf evs (retainedEntries defaultFinalOptions evs)
+      let secs = sectionsOf evs (retainedEntries promotedOnly evs)
       map (.sectionWord) secs `shouldBe` ["information", "attention"]
       map (map idOf . (.sectionEntries)) secs `shouldBe` [[1], [4, 5]]
 
@@ -93,7 +125,7 @@ spec = describe "Drift.Output.Final" $ do
       st <- style'
       evs <- fixtureLog
       (model, _) <- cannedModel
-      doc <- finalMarkdown (Just model) defaultFinalOptions st evs
+      doc <- finalMarkdown (Just model) promotedOnly st evs
       take 1 (T.lines doc.finalText) `shouldBe` ["# From entropy to flow"]
       let headings = [l | l <- T.lines doc.finalText, "## " `T.isPrefixOf` l]
       headings `shouldBe` ["## Information", "## Attention", "## References"]
@@ -104,7 +136,7 @@ spec = describe "Drift.Output.Final" $ do
       st <- style'
       evs <- fixtureLog
       (model, prompts) <- cannedModel
-      doc <- finalMarkdown (Just model) defaultFinalOptions st evs
+      doc <- finalMarkdown (Just model) promotedOnly st evs
       ps <- T.concat <$> prompts
       length (T.splitOn "Passage topic:" ps) `shouldBe` 3 -- two sections
       let (excludedRel, excludedExp) = (textOf evs 2, textOf evs 3)
@@ -116,7 +148,7 @@ spec = describe "Drift.Output.Final" $ do
       st <- style'
       evs <- fixtureLog
       (model, _) <- cannedModel
-      doc <- finalMarkdown (Just model) defaultFinalOptions st evs
+      doc <- finalMarkdown (Just model) promotedOnly st evs
       -- The model cited src3, which only the un-kept entry 2 cites.
       sourceIds doc.finalReferences `shouldMatchList` [1, 2, 4, 5]
       any ("src3" `T.isInfixOf`) doc.finalWarnings `shouldBe` True
@@ -125,7 +157,7 @@ spec = describe "Drift.Output.Final" $ do
       st <- style'
       evs <- fixtureLog
       (model, _) <- cannedModel
-      doc <- finalMarkdown (Just model) defaultFinalOptions st evs
+      doc <- finalMarkdown (Just model) promotedOnly st evs
       let refs = Set.fromList doc.finalReferences
       refs `shouldSatisfy` (`Set.isSubsetOf` draftRefs st evs)
       refs `shouldSatisfy` (`Set.isSubsetOf` keptCites evs)
@@ -137,14 +169,14 @@ spec = describe "Drift.Output.Final" $ do
       evs <- fixtureLog
       -- A model that cites only src1; src2, src4 and src5 are kept entries' sources but are not cited.
       let model _ = pure "Entropy measures how surprising a message is, as Shannon put it [@src1]."
-      doc <- finalMarkdown (Just model) defaultFinalOptions st evs
+      doc <- finalMarkdown (Just model) promotedOnly st evs
       sourceIds doc.finalReferences `shouldBe` [1]
 
   describe "without a usable model" $ do
     it "falls back to the kept entries' own text, with their citations, when there is no model" $ do
       st <- style'
       evs <- fixtureLog
-      doc <- finalMarkdown Nothing defaultFinalOptions st evs
+      doc <- finalMarkdown Nothing promotedOnly st evs
       let (rel1, _) = textOf evs 1
       T.unpack doc.finalText `shouldContain` T.unpack (T.dropWhileEnd (== '.') rel1)
       sourceIds doc.finalReferences `shouldMatchList` [1, 2, 4, 5]
@@ -154,7 +186,7 @@ spec = describe "Drift.Output.Final" $ do
     it "falls back, and says so, when the model fails" $ do
       st <- style'
       evs <- fixtureLog
-      doc <- finalMarkdown (Just (\_ -> ioError (userError "provider down"))) defaultFinalOptions st evs
+      doc <- finalMarkdown (Just (\_ -> ioError (userError "provider down"))) promotedOnly st evs
       sourceIds doc.finalReferences `shouldMatchList` [1, 2, 4, 5]
       length (filter ("the model failed" `T.isInfixOf`) doc.finalWarnings) `shouldBe` 2
 
@@ -163,7 +195,7 @@ spec = describe "Drift.Output.Final" $ do
       evs <- fixtureLog
       mapM_
         ( \reply -> do
-            doc <- finalMarkdown (Just (\_ -> pure reply)) defaultFinalOptions st evs
+            doc <- finalMarkdown (Just (\_ -> pure reply)) promotedOnly st evs
             sourceIds doc.finalReferences `shouldMatchList` [1, 2, 4, 5]
             any ("unusable" `T.isInfixOf`) doc.finalWarnings `shouldBe` True
         )
@@ -172,14 +204,14 @@ spec = describe "Drift.Output.Final" $ do
     it "does not swallow the cancellation of the job" $ do
       st <- style'
       evs <- fixtureLog
-      finalMarkdown (Just (\_ -> throwIO ThreadKilled)) defaultFinalOptions st evs `shouldThrow` (== ThreadKilled)
+      finalMarkdown (Just (\_ -> throwIO ThreadKilled)) promotedOnly st evs `shouldThrow` (== ThreadKilled)
 
   describe "whatever the model answers" $ do
     it "cannot add markup, headings or links of its own" $ do
       st <- style'
       evs <- fixtureLog
       let hostile = "# Pwned\n\n<script>alert(1)</script> and [click here](http://evil.example) with enough words to count [@src1].\n\n- a list item that goes on and on\n\n1. another one that goes on and on"
-      doc <- finalMarkdown (Just (\_ -> pure hostile)) defaultFinalOptions st evs
+      doc <- finalMarkdown (Just (\_ -> pure hostile)) promotedOnly st evs
       let ls = T.lines doc.finalText
       T.unpack doc.finalText `shouldNotContain` "<script>"
       T.unpack doc.finalText `shouldNotContain` "[click here]"
@@ -192,7 +224,7 @@ spec = describe "Drift.Output.Final" $ do
       st <- style'
       evs <- fixtureLog
       let reply = T.replicate 100000 "word "
-      doc <- finalMarkdown (Just (\_ -> pure reply)) defaultFinalOptions st evs
+      doc <- finalMarkdown (Just (\_ -> pure reply)) promotedOnly st evs
       T.length doc.finalText `shouldSatisfy` (< 20000)
 
     (st, evs) <- runIO ((,) <$> style' <*> fixtureLog)
@@ -203,7 +235,7 @@ spec = describe "Drift.Output.Final" $ do
         let keys = [n `mod` 9 | Positive n <- ks]
             reply = "A sentence long enough to be a passage of its own. " <> T.concat ["See [@src" <> T.pack (show k) <> "]. " | k <- keys]
             expected = Set.fromList (groundedCites (groundCitations allowed reply))
-        doc <- finalMarkdown (Just (\_ -> pure reply)) defaultFinalOptions st evs
+        doc <- finalMarkdown (Just (\_ -> pure reply)) promotedOnly st evs
         let refs = Set.fromList doc.finalReferences
         pure . conjoin $
           [ refs === expected
@@ -222,15 +254,15 @@ spec = describe "Drift.Output.Final" $ do
               , EntryWritten (Entry (EntryId 1) (NodeId 2) "Tides follow the moon" "The moon pulls the sea." [])
               , EntryPromoted (EntryId 1) 1
               ]
-      doc <- finalMarkdown Nothing defaultFinalOptions st evs
+      doc <- finalMarkdown Nothing promotedOnly st evs
       doc.finalText `shouldBe` "# From tide to moon\n\nTides follow the moon. The moon pulls the sea."
 
-    it "says so when no entry was kept, and lists no references" $ do
+    it "says so when no entry was kept at minPriority 1, and lists no references" $ do
       st <- style'
       evs <- fixtureLog
       let nothingKept = [s | s <- evs, case s.event of EntryPromoted {} -> False; _ -> True]
-      doc <- finalMarkdown (Just (\_ -> pure "never asked")) defaultFinalOptions st nothingKept
-      doc.finalText `shouldBe` "# From entropy to flow\n\n_No entries were kept at high priority._"
+      doc <- finalMarkdown (Just (\_ -> pure "never asked")) promotedOnly st nothingKept
+      doc.finalText `shouldBe` "# From entropy to flow\n\n_No entries were kept._"
       doc.finalReferences `shouldBe` []
 
   describe "citationPieces" $ do
