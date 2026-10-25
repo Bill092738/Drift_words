@@ -37,7 +37,7 @@ flowchart LR
         SA --> SRC[Source pipeline]
         BR & WR --> MP[Model provider slot]
         SRC --> SP[Search providers]
-        SA --> OUT[Outputs<br/>citeproc + pandoc]
+        SA --> OUT[Outputs<br/>citeproc + exporter]
     end
 
     T <-- commands / events --> WS
@@ -96,7 +96,7 @@ Events travel inside a server message: `Events [Stamped]`, where `Stamped` adds 
 | Outbound HTTP | `http-client-tls` (model and search APIs) |
 | Persistence | `sqlite-simple` (append-only event table) |
 | Citations | `citeproc` (CSL engine; any CSL style such as APA or IEEE) |
-| Export | `pandoc` as a library (Markdown, HTML, DOCX) |
+| Export | Markdown, HTML and DOCX from a small built-in exporter (planned as `pandoc`; see 4.8) |
 | Testing | `hspec`, `QuickCheck`, golden tests |
 
 ### 4.2 Domain model: a linked list of events
@@ -244,7 +244,7 @@ For each new edge (parent word to child word), a background job:
 
 - **Entries.** For each edge, a P2 job writes a relationship note and a short explanation. It waits briefly for that edge's source job. If a source arrives later, an `EntryRevised` event attaches the citation.
 - **Grounded citations.** The model may cite only by source key (`[@src12]`) from a list it is given. After generation, every key is validated against the retrieved sources, and unknown keys are dropped. Reference text is always rendered by `citeproc` from CSL-JSON, so the style (APA, IEEE, and so on) is a configuration switch.
-- **The three outputs**, assembled as a pandoc AST:
+- **The three outputs**, each assembled as Markdown:
   - **Decision tree:** derived directly from the log, including forks and backtracks. Emitted as JSON for the interactive view and as Mermaid inside the Markdown.
   - **Draft:** every entry in log order, with struck entries rendered struck through, and the full reference list.
   - **Final:** every entry that is not struck; promoted entries are marked as important for the model. Revisited nodes become section headings, and the model rewrites the outline into continuous prose under the same citation constraint. References are recomputed from what the final text actually cites.
@@ -461,7 +461,7 @@ M4 can start on day one with placeholder primitives and switch to the M3 engine 
 - *Done when:* entries appear without interrupting exploration, and promote, strike, and restore all survive a reload.
 
 **M8: Wrap-up and outputs.** *BE-AI and FE-Chrome. Depends on M6 and M7.*
-- Decision tree, draft, and final assembly; grounded citation validation; `citeproc` reference rendering; pandoc export to Markdown, HTML, and DOCX.
+- Decision tree, draft, and final assembly; grounded citation validation; `citeproc` reference rendering; export to Markdown, HTML, and DOCX.
 - Frontend outputs view with the interactive tree and downloads.
 - Invariants 5 and 6 from section 4.3.
 - *Done when:* the final document's references are exactly the sources its text cites, and the draft's references are a superset of them.
