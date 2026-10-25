@@ -10,10 +10,11 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.List (nub)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import Drift.Pipeline.Sources (WantedKind (..), drawKinds, edgeSeed)
 import Drift.Protocol (Lang (En), SourceKind (..))
 import Drift.Search.Commons
-import Drift.Search.OpenAlex (isPdfLink, parseOpenAlex)
+import Drift.Search.OpenAlex (displayTitle, isPdfLink, parseOpenAlex)
 import Drift.Search.Types (Hit (..), SourceDraft (..), SourceRequest (..))
 import Drift.Search.Wikipedia (parseWikipediaSearch)
 import Test.Hspec
@@ -72,6 +73,27 @@ spec = do
         `shouldBe` [True, True, True]
       map isPdfLink ["https://hdl.handle.net/10023/123", "https://dc.cod.edu/cgi/viewcontent.cgi?article=1", "ftp://x.org/a.pdf"]
         `shouldBe` [False, False, False]
+
+  describe "OpenAlex quality" $ do
+    let work :: Int -> T.Text -> Int -> Int -> T.Text
+        work n title year cited =
+          "{\"doi\":\"https://doi.org/10.1/" <> T.pack (show n) <> "\",\"title\":\"" <> title
+            <> "\",\"publication_year\":" <> T.pack (show year) <> ",\"cited_by_count\":" <> T.pack (show cited) <> "}"
+        response ws = LBS.fromStrict (TE.encodeUtf8 ("{\"results\":[" <> T.intercalate "," ws <> "]}"))
+        titles = fmap (map (.hitDraft.title)) . parseOpenAlex . response
+
+    it "drops works before 1950 when newer ones match, and keeps them otherwise" $ do
+      titles [work 1 "Old kiln" 1922 5, work 2 "New tides" 2001 3] `shouldBe` Right ["New tides"]
+      titles [work 1 "Old kiln" 1922 5] `shouldBe` Right ["Old kiln"]
+
+    it "puts cited works before uncited ones, otherwise keeping OpenAlex's order" $
+      titles [work 1 "Uncited" 2001 0, work 2 "Cited a" 2002 4, work 3 "Cited b" 2003 1]
+        `shouldBe` Right ["Cited a", "Cited b", "Uncited"]
+
+    it "shows all-caps titles in title case, leaving others alone" $ do
+      displayTitle "RHYTHMS, CYCLES AND PERIODS IN HEALTH AND DISEASE" `shouldBe` "Rhythms, Cycles and Periods in Health and Disease"
+      displayTitle "Moon, tides and climate" `shouldBe` "Moon, tides and climate"
+      displayTitle "DNA" `shouldBe` "Dna"
 
   describe "Wikipedia thumbnails" $
     it "reads the protocol-relative thumbnail as an https link, and none when absent" $ do
