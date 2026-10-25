@@ -60,5 +60,7 @@ export function Desk({ store, onScene }: { store: StoreApi<SessionStore>; onScen
     };
   }, [store]);
 
-  return <div ref={host} className="desk" aria-label="Desk" />;
+  // The canvas cannot be read by assistive technology; the word list
+  // (a11y/WordList.tsx) offers the same choices.
+  return <div ref={host} className="desk" aria-hidden="true" />;
 }

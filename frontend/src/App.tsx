@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { StoreApi } from 'zustand/vanilla';
+import { AccessibilitySettings } from './a11y/AccessibilitySettings.tsx';
+import { WordList } from './a11y/WordList.tsx';
 import { Controls } from './chrome/controls/Controls.tsx';
 import { DeskLoading, DeskLoadingPlaceholder } from './chrome/feedback/DeskLoading.tsx';
 import { Toaster } from './chrome/feedback/Toaster.tsx';
@@ -147,6 +149,7 @@ export function App() {
         connection.state !== 'failed' && <DeskLoadingPlaceholder />
       )}
       {store && <Toaster store={store} />}
+      {store && <WordList store={store} />}
       {store && <Controls store={store} onWrapUp={() => setWrapRequested(true)} onViewOutputs={() => setOutputsOpen(true)} />}
       {store && (
         <OutputsHost
@@ -166,7 +169,9 @@ export function App() {
           <img className="brand-mark" src="/favicon.svg" alt="" />
           Driftwords
         </span>
-        <HelpPopover />
+        <HelpPopover>
+          <AccessibilitySettings />
+        </HelpPopover>
         {devMode && (
           <>
             <span className="app-bar-divider" aria-hidden="true" />

@@ -104,6 +104,71 @@
   }
 }
 
+/* Accessibility settings (a11y/preferences.ts sets these attributes). */
+
+:root[data-text='large'] {
+  --text-scale: 1.2;
+}
+
+/* High contrast: darker text and borders, opaque surfaces, a bolder focus ring. */
+:root[data-contrast='high'] {
+  --desk-dot: #b8b5ac;
+  --fg-secondary: #1d1d1f;
+  --muted: #3c3c41;
+  --line: #8a8a8e;
+  --line-soft: #b8b8bd;
+  --chip: #e2e2e5;
+  --chip-hover: #d4d4d8;
+  --accent: #1f4fd6;
+  --accent-hover: #173fb0;
+  --accent-soft: rgb(31 79 214 / 0.16);
+  --danger: #b0170d;
+  --warning: #8a3d00;
+  --focus-ring: 0 0 0 3px #1f4fd6;
+  --material: var(--surface);
+  --material-strong: var(--surface);
+  --material-filter: none;
+  --backdrop: rgb(0 0 0 / 0.5);
+  --shadow: 0 0 0 1px #8a8a8e, 0 4px 12px rgb(0 0 0 / 0.12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-contrast='high'] {
+    --bg: #000000;
+    --surface: #111113;
+    --desk-dot: #4a4a50;
+    --fg: #ffffff;
+    --fg-secondary: #f2f2f4;
+    --muted: #c7c7cc;
+    --line: #8e8e93;
+    --line-soft: #636366;
+    --chip: #2c2c30;
+    --chip-hover: #3a3a3f;
+    --accent: #a3bbff;
+    --accent-hover: #c0d0ff;
+    --accent-soft: rgb(163 187 255 / 0.2);
+    --danger: #ff8a80;
+    --warning: #ffc266;
+    --focus-ring: 0 0 0 3px #a3bbff;
+    --shadow: 0 0 0 1px #8e8e93;
+  }
+}
+
+/* Reduced motion from the app setting, on top of the system media query. */
+:root[data-motion='reduce'] *,
+:root[data-motion='reduce'] *::before,
+:root[data-motion='reduce'] *::after {
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 1ms !important;
+  scroll-behavior: auto !important;
+}
+
+:root[data-motion='reduce'] .spinner {
+  animation-duration: 2.4s !important;
+  animation-iteration-count: infinite !important;
+}
+
 * {
   box-sizing: border-box;
 }
