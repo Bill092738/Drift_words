@@ -370,9 +370,9 @@ spec = describe "Session actor" $ do
       submit sub (ClientMsg 1 (StartWithWord "root"))
       _ <- events sub
       receive sub `shouldReturn` Diagnostic LevelWarning
-        "Branch generation failed (attempt 1 of 3), retrying: user error (temporary generator error)"
+        "Branch generation failed (attempt 1 of 3), retrying: temporary generator error"
       receive sub `shouldReturn` Diagnostic LevelWarning
-        "Branch generation failed (attempt 2 of 3), retrying: user error (temporary generator error)"
+        "Branch generation failed (attempt 2 of 3), retrying: temporary generator error"
       streamedWords <$> events sub `shouldReturn` ["recovered"]
       readIORef attempts `shouldReturn` 3
       noMessage sub
@@ -389,15 +389,32 @@ spec = describe "Session actor" $ do
       submit sub (ClientMsg 1 (StartWithWord "root"))
       _ <- events sub
       receive sub `shouldReturn` Diagnostic LevelWarning
-        "Branch generation failed (attempt 1 of 3), retrying: user error (private generator error)"
+        "Branch generation failed (attempt 1 of 3), retrying: private generator error"
       receive sub `shouldReturn` Diagnostic LevelWarning
-        "Branch generation failed (attempt 2 of 3), retrying: user error (private generator error)"
+        "Branch generation failed (attempt 2 of 3), retrying: private generator error"
       receive sub `shouldReturn` Diagnostic LevelError
-        "Branch generation failed after 3 attempts: user error (private generator error)"
+        "Branch generation failed after 3 attempts: private generator error"
       readIORef attempts `shouldReturn` 3
       submit sub (ClientMsg 2 (SetDivergence 0.4))
       map (\stamped -> stamped.event) <$> events sub `shouldReturn` [DivergenceSet 0.4]
       noMessage sub
+
+  it "does not retry a rejected API key and says which setting to check" $ do
+    attempts <- newIORef (0 :: Int)
+    let generator _ _ = do
+          atomicModifyIORef' attempts (\n -> (n + 1, ()))
+          throwIO (userError "The model rejected the API key. OpenAI-compatible endpoint returned HTTP 401")
+    withEngine generator $ \_ _ manager -> do
+      sid <- createManagedSession manager En
+      sub <- connected manager sid
+      _ <- events sub
+      submit sub (ClientMsg 1 (StartWithWord "root"))
+      _ <- events sub
+      message <- bounded (receive sub)
+      case message of
+        Diagnostic LevelError why -> Text.unpack why `shouldContain` "api_key_env"
+        other -> expectationFailure (show other)
+      readIORef attempts `shouldReturn` 1
 
   forM_ [En, Zh] $ \language ->
     it ("walks 15 mock nodes with chronological sequences and globally fresh visible candidate IDs: " <> show language) $

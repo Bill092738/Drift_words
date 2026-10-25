@@ -32,6 +32,7 @@ import Drift.Domain.Decide (admitEntry, admitSource, decide, offerBranches)
 import Drift.Domain.Entries (entriesForNode)
 import Drift.Domain.State (applyStamped, replay)
 import Drift.Domain.Types
+import Drift.Model.Provider (isAuthFailureMessage, readableError)
 import Drift.Model.SessionMock (BranchGenerator, mockCloud)
 import Drift.Pipeline.Writing (WritingInput (..), fallbackEntry)
 import Drift.Search.Types (SourceRequest (..), SourceDraft)
@@ -586,6 +587,10 @@ startActor manager sid history = do
                     Left (failure :: SomeException)
                       -- Cancellation (a newer generation, wrap-up, shutdown) must not be retried.
                       | Just _ <- fromException @SomeAsyncException failure -> throwIO failure
+                      -- A rejected key will not get better by retrying.
+                      | isAuthFailureMessage (describe failure) ->
+                          pure . Left $ describe failure
+                            <> " Check the key in the variable named by api_key_env in DRIFT_CONFIG (for example GEMINI_API_KEY)."
                       | n < generationAttempts -> do
                           atomically $ writeTQueue inbox $ Diagnose token $ Diagnostic LevelWarning $
                             "Branch generation failed (attempt " <> showText n <> " of " <> showText generationAttempts
@@ -616,7 +621,7 @@ retryDelayMicros :: Int -> Int
 retryDelayMicros n = 250000 * (2 * n - 1)
 
 describe :: SomeException -> Text
-describe = Text.take 300 . Text.pack . takeWhile (/= '\n') . displayException
+describe = Text.take 300 . readableError . Text.pack . displayException
 
 showText :: Show a => a -> Text
 showText = Text.pack . show

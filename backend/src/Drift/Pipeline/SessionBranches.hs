@@ -31,8 +31,11 @@ import Control.Monad (forM_, when)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Text (Text)
+import qualified Data.Text as T
 import Drift.Domain.Types (Node (..), Session (..))
 import Drift.Domain.Word (wordKey)
+import Drift.Model.Provider (readableError)
+import Drift.Model.Scheduler (JobError (..))
 import Drift.Model.SessionMock (BranchGenerator)
 import Drift.Pipeline.BranchService
 import Drift.Pipeline.Branches (BranchContext (..))
@@ -55,13 +58,20 @@ liveBranches prefetch service session target = case branchContext session target
     result <- branchesFor service (pickKey session target context) context (const (pure ()))
     case result of
       Left NoCandidates -> pure []
-      Left (BranchJobFailed failure) -> throwIO (userError ("the branch model failed: " <> show failure))
+      Left (BranchJobFailed failure) -> throwIO (userError (T.unpack ("The branch model failed: " <> jobErrorText failure)))
       Right ring -> do
         when prefetch $
           forM_ ring $ \word ->
             let next = childContext context ring word
              in prefetchBranches service (keyOf next) next
         pure ring
+
+-- | A scheduler error as a person should read it, without the backtrace.
+jobErrorText :: JobError -> Text
+jobErrorText = \case
+  JobFailed message -> readableError message
+  JobCancelled -> "the request was cancelled"
+  SchedulerStopped -> "the model scheduler stopped"
 
 -- | The prefetch to reuse for this ring, if any. Only a word just picked from
 -- a ring can have one. Anything else (a backtrack, an inserted or typed word, a

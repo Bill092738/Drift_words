@@ -28,8 +28,8 @@ import Control.Monad (when)
 import qualified Data.Text as T
 import Drift.Api (api, server)
 import Drift.Model.Config
-import Drift.Model.OpenAICompat (RequestOptions (..))
-import Drift.Model.Provider (GenRequest (..), ModelProvider (..))
+import Drift.Model.OpenAICompat (RequestOptions (..), checkModelAccess)
+import Drift.Model.Provider (GenRequest (..), ModelProvider (..), isAuthFailureMessage)
 import Drift.Model.SessionMock (BranchGenerator, mockBranches, mockCloud)
 import Drift.Output.Assemble (modelOutputs, orElseOutputs)
 import Drift.Output.Final (Generate)
@@ -114,6 +114,7 @@ withGenerator (Just path) prefetch action = do
   embeddingConfig <- either (die . (("model config " <> path <> ": ") <>) . show) pure (resolveOptionalProvider config EmbeddingsRole)
   cloudConfig <- either (die . (("model config " <> path <> ": ") <>) . show) pure (resolveOptionalProvider config CloudRole)
   provider <- createModelProvider branchConfig
+  checkAccess branchConfig
   embedder <- case embeddingConfig of
     Nothing -> Nothing <$ putStrLn "embeddings: none (rings keep the model's order)"
     Just embeddingProvider -> do
@@ -138,6 +139,20 @@ withGenerator (Just path) prefetch action = do
   let configure = if parallel then withParallelPrefetch else id
   bracket (configure <$> newBranchService provider (providerModel branchConfig) embedder) closeBranchService $ \service ->
     action (liveBranches prefetch service) cloud
+
+-- | Fails at startup when the provider rejects the API key, instead of at the
+-- first pick. Other failures (no network, no @/models@ route) only warn.
+checkAccess :: ProviderConfig -> IO ()
+checkAccess cfg
+  | providerKind cfg `notElem` [OpenAICompatible, OpenAIResponses] = pure ()
+  | otherwise = do
+      result <- toOpenAISettings cfg >>= checkModelAccess
+      case result of
+        Right () -> putStrLn "model access: the API key works"
+        Left why
+          | isAuthFailureMessage why ->
+              die (T.unpack why <> "\nCheck the variable " <> maybe "named by api_key_env" T.unpack (providerApiKeyEnv cfg) <> " (DRIFT_CONFIG).")
+          | otherwise -> hPutStrLn stderr ("warning: could not check model access: " <> T.unpack why)
 
 -- | The model for the final document, from the config's optional @final@ role.
 -- Only names are printed: the API key never is.
