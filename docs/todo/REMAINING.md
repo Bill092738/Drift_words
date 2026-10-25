@@ -1,8 +1,21 @@
 # Remaining work (Gemini-independent)
 
-State of `main` at `0615ee2` (October 24, 2026, evening): M0 to M8 are merged. A live session explores with Gemini rings, drops sources, writes template notes, and wraps up into a decision tree, a draft and a final document with Markdown, HTML and Word downloads.
+Written against `main` at `0615ee2` (October 24, 2026, evening) and updated at `44c6a36` (October 25, after PR #19). M0 to M8 are merged. A live session explores with Gemini rings, drops a mix of web pages, papers, PDFs, images and audio, writes template notes, and wraps up into a decision tree, a draft and a final document with Markdown, HTML and Word downloads.
 
 This list is everything left that does **not** depend on wiring Gemini into the notes. The Gemini items are listed at the end only so they are not done twice.
+
+## Still open
+
+| Priority | Item | Section |
+| --- | --- | --- |
+| P0 | Rehearse the demo, record the video and a fallback video | 6 |
+| P1 | Export `OPENALEX_API_KEY` before the demo | 2 |
+| P1 | Browser check of the new source kinds (step 7) | 1 |
+| P2 | Final document sections in parallel | 4 |
+| P2 | Open a `.docx` export in real Word | 4 |
+| P2 | Random session ids | 5 |
+| P2 | Rings streamed word by word | 5 |
+| P2 | Text LOD on the real desk, long-press, measured performance budgets | 6 |
 
 **Deadline:** hacking ends at **10:00 AM on Sunday, October 25**, and the 3-minute video is due then. Priorities:
 
@@ -101,7 +114,7 @@ The backend just never sends `image`, `audio` or `pdf`.
   - prefer works with `cited_by_count > 0`;
   - require the two words to be separate words in the title, not substrings of names.
 - [x] **All-caps titles from OpenAlex** ("RHYTHMS, CYCLES AND PERIODS IN HEALTH AND DISEASE"). Convert them to title case for display only; the CSL stays as retrieved.
-- [ ] **Before the demo, set `OPENALEX_API_KEY` in `.env`.** Sources are on by default, so every edge makes one OpenAlex search. Without a key there are about 100 searches a day, shared by everyone on the venue's IP address.
+- [ ] **Before the demo, set `OPENALEX_API_KEY`.** Export it in the shell before `make demo` (as in [docs/DEMO.md](../DEMO.md)); only `start.sh` reads `.env`. Sources are on by default. Since the kind draw (section 1), only edges that draw the paper kind search OpenAlex (it is never a fallback), but that is still a large share of edges. Without a key there are about 100 searches a day, shared by everyone on the venue's IP address.
 
 ## 3. Sidebar (P1)
 
