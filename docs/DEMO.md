@@ -4,7 +4,7 @@ A 3-minute run that shows every part of Driftwords once. Rehearse it twice befor
 
 ## Before you start
 
-- [ ] `export GEMINI_API_KEY=...` in the shell (never commit it). `drift-server` checks the key at startup and stops with a clear message if it is wrong.
+- [ ] Set `GEMINI_API_KEY` in `.env` (copy `.env.example`; it is gitignored) or export it in the shell. Never commit it. `drift-server` checks the key at startup and stops with a clear message if it is wrong.
 - [ ] `export OPENALEX_API_KEY=...` (free). Without it, every machine on the venue's IP address shares about 100 paper searches a day.
 - [ ] `make demo`, then open `http://localhost:8080/?live`. Add `&debug=1` if you want `window.__desk` in the console.
 - [ ] Close other tabs and turn off notifications. Use a browser window around 1440 × 900.
