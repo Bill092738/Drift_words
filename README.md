@@ -16,7 +16,7 @@ Built at **HackOHI/O 2026** (Open Track).
 
 ## Team
 
-**Team #56: MyGO!**
+**Team #56: MyGO**
 
 | Member | Discord username |
 | --- | --- |
