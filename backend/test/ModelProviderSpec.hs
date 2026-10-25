@@ -113,11 +113,17 @@ spec = do
       resolveOptionalProvider dangling EmbeddingsRole `shouldBe` Left (UnknownProvider "missing")
 
     it "loads the committed configs, with no mock embeddings behind a real model" $
-      forM_ ["config.packycode.yaml", "config.codex-sale.yaml"] $ \path -> do
+      forM_ ["config.example.yaml", "config.gemini.yaml"] $ \path -> do
         loaded <- loadModelConfig path
         case loaded of
           Left err -> expectationFailure (path <> ": " <> T.unpack err)
-          Right config -> resolveOptionalProvider config EmbeddingsRole `shouldBe` Right Nothing
+          Right config -> case (resolveProvider config BranchesRole, resolveOptionalProvider config EmbeddingsRole) of
+            (Right branches, Right (Just embeddings))
+              | providerKind branches /= Mock -> do
+                  providerKind embeddings `shouldNotBe` Mock
+                  providerEmbeddingModel embeddings `shouldSatisfy` (/= Nothing)
+            (Right _, Right _) -> pure ()
+            (branches, embeddings) -> expectationFailure (path <> ": " <> show branches <> " " <> show embeddings)
 
   describe "OpenAI-compatible response parsing" $ do
     it "parses completion and embedding payloads" $ do

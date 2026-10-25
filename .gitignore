@@ -2,6 +2,18 @@
 # and AI agents to read, never pushed.
 /references/
 
+# AI agent working files: plans, specs, progress lists and local settings.
+# They stay on disk for the agents to read, never pushed. CLAUDE.md, the
+# shared agent guide, is kept in git.
+/docs/superpowers/
+/docs/todo/
+.claude/
+.codex/
+.cursor/
+.aider*
+.specstory/
+CLAUDE.local.md
+
 # Haskell
 dist-newstyle/
 .ghc.environment.*
@@ -24,10 +36,23 @@ dist/
 .env.*
 !.env.example
 config.yaml
+# Personal provider configs. Only the example and the Gemini demo are shared.
+/backend/config.*.yaml
+!/backend/config.example.yaml
+!/backend/config.gemini.yaml
 api-config.txt
 *-key.dpapi
 
+# Logs and test reports
+*.log
+coverage/
+test-results/
+playwright-report/
+
 # Editors and OS
+*.swp
+*.swo
+*~
 .vscode/
 .idea/
 .DS_Store
