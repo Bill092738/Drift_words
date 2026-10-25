@@ -99,7 +99,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 14px 8px 22px;
+  padding: 14px 14px 10px 22px;
 }
 
 .outputs-head h2 {
@@ -110,25 +110,18 @@
 
 .outputs-tabs {
   display: flex;
-  gap: 4px;
-  padding: 0 14px;
+  justify-content: center;
+  padding: 2px 22px 12px;
   border-bottom: 1px solid var(--line);
 }
 
-.outputs-tabs [role='tab'] {
-  padding: 8px 14px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: none;
-  color: var(--muted);
-  font: 500 var(--fs-13) / 1.2 var(--font);
-  cursor: pointer;
+.outputs-tabs .segmented {
+  width: min(360px, 100%);
 }
 
-.outputs-tabs [role='tab'][aria-selected='true'] {
-  border-bottom-color: var(--accent);
-  color: var(--fg);
-  font-weight: 600;
+.outputs-tabs .segmented button {
+  height: 26px;
+  font-size: var(--fs-13);
 }
 
 .outputs-body {
@@ -152,7 +145,18 @@
   font-size: var(--fs-13);
 }
 
+.outputs-export {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  color: var(--muted);
+  font-weight: 500;
+}
+
 .outputs-problem {
+  flex-basis: 100%;
+  text-align: right;
   color: var(--danger);
 }
 

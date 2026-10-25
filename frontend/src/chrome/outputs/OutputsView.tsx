@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { devMode } from '../../devMode.ts';
 import type { StoreApi } from 'zustand/vanilla';
 import { type SessionStore, useSession } from '../../store/store.ts';
 import { buildTreeRows, countRows } from '../../store/tree.ts';
@@ -26,6 +27,13 @@ interface Props {
   /** True while the view plays its exit animation. */
   closing?: boolean;
 }
+
+/** How the footer names what it exports: "Export the final document". */
+const EXPORT_NAMES: Record<DocKind, string> = {
+  tree: 'the decision tree',
+  draft: 'the draft',
+  final: 'the final document',
+};
 
 const SERVER_FORMATS: { format: Exclude<FileFormat, 'md'>; label: string }[] = [
   { format: 'html', label: 'HTML' },
@@ -112,32 +120,39 @@ export function OutputsView({ store, sessionId, onClose, closing = false }: Prop
           </button>
         </header>
 
-        <div className="outputs-tabs" role="tablist" aria-label="Outputs">
-          {DOC_KINDS.map((kind) => (
-            <button
-              key={kind}
-              type="button"
-              role="tab"
-              id={`outputs-tab-${kind}`}
-              aria-selected={tab === kind}
-              aria-controls="outputs-panel"
-              tabIndex={tab === kind ? 0 : -1}
-              onClick={() => {
-                setTab(kind);
-                setProblem(null);
-              }}
-              onKeyDown={(e) => {
-                const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
-                if (step === 0) return;
-                e.preventDefault();
-                const next = DOC_KINDS[(DOC_KINDS.indexOf(kind) + step + DOC_KINDS.length) % DOC_KINDS.length]!;
-                setTab(next);
-                document.getElementById(`outputs-tab-${next}`)?.focus();
-              }}
-            >
-              {DOC_LABELS[kind]}
-            </button>
-          ))}
+        <div className="outputs-tabs">
+          <div
+            className="segmented"
+            role="tablist"
+            aria-label="Outputs"
+            style={{ '--count': DOC_KINDS.length, '--index': DOC_KINDS.indexOf(tab) } as CSSProperties}
+          >
+            {DOC_KINDS.map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                role="tab"
+                id={`outputs-tab-${kind}`}
+                aria-selected={tab === kind}
+                aria-controls="outputs-panel"
+                tabIndex={tab === kind ? 0 : -1}
+                onClick={() => {
+                  setTab(kind);
+                  setProblem(null);
+                }}
+                onKeyDown={(e) => {
+                  const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+                  if (step === 0) return;
+                  e.preventDefault();
+                  const next = DOC_KINDS[(DOC_KINDS.indexOf(kind) + step + DOC_KINDS.length) % DOC_KINDS.length]!;
+                  setTab(next);
+                  document.getElementById(`outputs-tab-${next}`)?.focus();
+                }}
+              >
+                {DOC_LABELS[kind]}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="outputs-body" id="outputs-panel" role="tabpanel" aria-labelledby={`outputs-tab-${tab}`}>
@@ -147,12 +162,14 @@ export function OutputsView({ store, sessionId, onClose, closing = false }: Prop
                 {countRows(rows)} {countRows(rows) === 1 ? 'word' : 'words'}. Dashed branches were taken after going back.
               </p>
               <DecisionTree rows={rows} />
-              <details className="outputs-source">
-                <summary>Diagram source (Mermaid)</summary>
-                <pre>
-                  <code>{outputs.decisionTree}</code>
-                </pre>
-              </details>
+              {devMode && (
+                <details className="outputs-source">
+                  <summary>Diagram source (Mermaid)</summary>
+                  <pre>
+                    <code>{outputs.decisionTree}</code>
+                  </pre>
+                </details>
+              )}
             </>
           ) : (
             <MarkdownView text={markdownOf(outputs, tab)} />
@@ -160,7 +177,10 @@ export function OutputsView({ store, sessionId, onClose, closing = false }: Prop
         </div>
 
         <footer className="outputs-foot">
-          <span className="muted">Download {DOC_LABELS[tab].toLowerCase()}:</span>
+          <span className="outputs-export">
+            <icons.download />
+            Export {EXPORT_NAMES[tab]}
+          </span>
           <button type="button" className="btn btn-secondary btn-sm" onClick={() => void download('md')}>
             Markdown
           </button>
@@ -170,7 +190,7 @@ export function OutputsView({ store, sessionId, onClose, closing = false }: Prop
               type="button"
               className="btn btn-secondary btn-sm"
               disabled={sessionId === null || busy !== null}
-              title={sessionId === null ? 'Made by the backend: open a live session to use it' : undefined}
+              title={sessionId === null ? 'Available in a live session' : undefined}
               onClick={() => void download(format)}
             >
               {busy === format ? 'Preparing…' : label}
