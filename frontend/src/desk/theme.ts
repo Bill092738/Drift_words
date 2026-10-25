@@ -9,13 +9,18 @@ export interface DeskTheme {
   accent: number;
   shadow: number;
   dark: boolean;
+  /** The same font stack as the DOM chrome (`--font`). */
+  font: string;
 }
+
+const FALLBACK_FONT = '-apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif';
 
 export function readTheme(): DeskTheme {
   const css = getComputedStyle(document.documentElement);
   const color = (name: string, fallback: string) => new Color(css.getPropertyValue(name).trim() || fallback).toNumber();
   const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   return {
+    font: css.getPropertyValue('--font').trim() || FALLBACK_FONT,
     surface: color('--surface', '#ffffff'),
     fg: color('--fg', '#1d1d1f'),
     muted: color('--muted', '#76767c'),

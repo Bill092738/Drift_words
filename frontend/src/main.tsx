@@ -2,6 +2,8 @@ import { StrictMode, Suspense, lazy } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App.tsx';
 import { EventLogView } from './dev/EventLogView.tsx';
+// Inter stands in for San Francisco where the system does not have it.
+import '@fontsource-variable/inter/wght.css';
 import './styles.css';
 
 // The playground is a dev page; load it on demand.

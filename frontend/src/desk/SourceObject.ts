@@ -18,7 +18,6 @@ const FOCUS_CAPTION_WIDTH = 150;
 const FOCUS_CAPTION_LINES = 4;
 const CAPTION_GAP = 8;
 const PDF_RED = 0xe5484d;
-const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 /** Springs for landing: a little bounce on scale, a little more on rotation. */
 const LAND: SpringConfig = { response: 0.55, dampingFraction: 0.62 };
 const LAND_SPIN: SpringConfig = { response: 0.7, dampingFraction: 0.5 };
@@ -245,7 +244,7 @@ export class SourceObject implements Drawable {
   private layoutText(): void {
     const width = this.focused ? FOCUS_CAPTION_WIDTH : CAPTION_WIDTH;
     this.caption.style = {
-      fontFamily: FONT,
+      fontFamily: this.theme.font,
       fontSize: this.focused ? 9 : 11,
       fontWeight: this.focused ? '600' : '500',
       fill: this.focused ? this.theme.fg : this.theme.muted,
@@ -260,7 +259,7 @@ export class SourceObject implements Drawable {
 
     const tap = window.matchMedia('(pointer: coarse)').matches ? 'Tap' : 'Click';
     const site = this.source.site ?? hostOf(this.source.url);
-    this.detail.style = { fontFamily: FONT, fontSize: 7.5, fill: this.theme.muted, align: 'center', lineHeight: 11 };
+    this.detail.style = { fontFamily: this.theme.font, fontSize: 7.5, fill: this.theme.muted, align: 'center', lineHeight: 11 };
     this.detail.text = `${sourceKindLabel[this.source.kind]} · ${site}\n${tap} again to open`;
     this.detail.position.set(0, this.caption.position.y + this.caption.height + 4);
   }
@@ -313,7 +312,7 @@ export class SourceObject implements Drawable {
       const label = new Text({
         text: 'PDF',
         resolution: Math.min(window.devicePixelRatio || 1, 2) * 2,
-        style: { fontFamily: FONT, fontSize: 7.5, fontWeight: '700', fill: 0xffffff },
+        style: { fontFamily: t.font, fontSize: 7.5, fontWeight: '700', fill: 0xffffff },
       });
       label.anchor.set(0.5);
       label.position.set(l + 9, h / 2 - 14);

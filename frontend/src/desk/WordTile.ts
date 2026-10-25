@@ -158,7 +158,7 @@ export class WordTile implements Drawable {
   private redraw(): void {
     const s = style[this.variant];
     this.label.style = {
-      fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+      fontFamily: this.theme.font,
       fontSize: s.size,
       fontWeight: s.weight,
       fill: this.theme.fg,
