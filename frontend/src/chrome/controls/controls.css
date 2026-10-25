@@ -107,13 +107,15 @@
 }
 
 .word-input button {
+  display: grid;
+  place-items: center;
   width: 28px;
   height: 28px;
+  padding: 0;
   border: none;
   border-radius: 50%;
   background: var(--accent);
-  color: #fff;
-  font: 600 18px/1 var(--font);
+  color: var(--on-accent);
   cursor: pointer;
 }
 

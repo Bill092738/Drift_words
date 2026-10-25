@@ -12,6 +12,7 @@ import {
   type FileFormat,
   markdownOf,
 } from './download.ts';
+import { icons } from '../icons.tsx';
 import { MarkdownView } from './MarkdownView.tsx';
 import './outputs.css';
 
@@ -104,7 +105,7 @@ export function OutputsView({ store, sessionId, onClose }: Props) {
         <header className="outputs-head">
           <h2 id="outputs-title">Your outputs</h2>
           <button type="button" className="outputs-close" onClick={onClose} ref={closeButton} aria-label="Close">
-            ×
+            <icons.close />
           </button>
         </header>
 

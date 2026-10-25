@@ -47,15 +47,18 @@ export function EntryItem({ entry, send, onCiteClick }: Props) {
         {entry.from !== null && (
           <>
             <span>{entry.from}</span>
-            <span className="arrow" aria-label="to">
-              →
+            <span className="arrow">
+              <icons.arrowRight />
+              <span className="sr-only">to</span>
             </span>
           </>
         )}
         <span className="to">{entry.to}</span>
         {priority > 0 && (
           <span className="level" title={`Priority ${priority}`} data-pending={pending > 0 || undefined}>
-            ↑{priority}
+            <icons.promote size={10} />
+            <span className="sr-only">Priority </span>
+            {priority}
           </span>
         )}
       </div>

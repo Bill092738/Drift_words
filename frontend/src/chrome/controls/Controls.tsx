@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { StoreApi } from 'zustand/vanilla';
 import { useSession, type SessionStore } from '../../store/store.ts';
+import { icons } from '../icons.tsx';
 import './controls.css';
 
 /** Mirrors the backend's rule: one word, no spaces, up to 40 characters. */
@@ -137,7 +138,7 @@ export function Controls({ store, onWrapUp, onViewOutputs }: Props) {
           spellCheck={false}
         />
         <button type="submit" disabled={word === ''} aria-label="Add word">
-          +
+          <icons.plus />
         </button>
       </form>
       {started && (
