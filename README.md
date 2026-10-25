@@ -14,6 +14,16 @@ Built at **HackOHI/O 2026** (Open Track).
 
 </div>
 
+## Team
+
+**Team #56: MyGO!**
+
+| Member | Discord |
+| --- | --- |
+| Bill Zhao (team lead) | @Bill Zhao |
+| bellayanovo | @bellayanovo |
+| LordofChaos | @LordofChaos |
+
 ---
 
 Driftwords is a browser-based tool for the moments when you want to do something but don't know what, or have a vague direction you can't untangle. Instead of a blank prompt, you get an infinite desk of drifting words. You pick the one that interests you most, it grows a ring of related words, and you pick again. Your path becomes a tree, sources quietly land on the desk behind the words they explain, and a sidebar turns the path into structured, cited notes. When you're done, you leave with a decision tree, a full draft and a final document.
