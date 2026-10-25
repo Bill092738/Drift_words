@@ -18,11 +18,11 @@ Built at **HackOHI/O 2026** (Open Track).
 
 **Team #56: MyGO!**
 
-| Member | Discord |
+| Member | Discord username |
 | --- | --- |
-| Bill Zhao (team lead) | @Bill Zhao |
-| bellayanovo | @bellayanovo |
-| LordofChaos | @LordofChaos |
+| Bill Zhao (team lead) | `billzhao4` |
+| bellayanovo | `bellayanovo` |
+| LordofChaos | `lordofchaos9559` |
 
 ---
 
