@@ -30,19 +30,22 @@ describe('mockOutputs', () => {
     expect(lines[2]!.startsWith('3. ~~')).toBe(true);
   });
 
-  it('keeps only promoted, un-struck entries in the final document', () => {
+  it('keeps every un-struck entry in the final document, promoted or not', () => {
     const final = mockOutputs(state).final;
     expect(final.startsWith('# From entropy to flow')).toBe(true);
-    const draftTexts = [...state.entries.values()].map((e) => e.entry.relation);
-    const kept = [...state.entries.values()].filter((e) => !e.struck && e.priority >= 1).map((e) => e.entry.relation);
+    const all = [...state.entries.values()];
+    const kept = all.filter((e) => !e.struck).map((e) => e.entry.relation);
+    const struck = all.filter((e) => e.struck).map((e) => e.entry.relation);
+    expect(all.some((e) => !e.struck && e.priority === 0)).toBe(true);
     for (const relation of kept) expect(final).toContain(relation.replace(/[.]$/u, ''));
-    expect(draftTexts.length).toBeGreaterThan(kept.length);
+    expect(struck.length).toBeGreaterThan(0);
+    for (const relation of struck) expect(final).not.toContain(relation.replace(/[.]$/u, ''));
   });
 
   it('says so when there is nothing yet', () => {
     const empty = mockOutputs(emptySession);
     expect(empty.draft).toContain('_No entries yet._');
-    expect(empty.final).toContain('_No entries were kept at high priority._');
+    expect(empty.final).toContain('_No entries were kept._');
     expect(empty.decisionTree).toBe('```mermaid\nflowchart TD\n```');
   });
 

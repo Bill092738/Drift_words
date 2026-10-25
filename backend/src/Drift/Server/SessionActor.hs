@@ -10,8 +10,8 @@ module Drift.Server.SessionActor
   , createManagedSession, subscribeSession
   , newManagerWithOutputs, withOutputs, storedOutputs
   , newManagerWithAppendObserver, subscribeSessionWithJoinObserver
-  , newManagerWithSourceWait
-  , sourceConcurrency, sourceQueueCapacity, sourceWaitMicros
+  , newManagerWithSourceWait, withSourceWaitMicros, withNotesWait
+  , sourceConcurrency, sourceQueueCapacity, sourceWaitMicros, notesWaitMicros
   , submit, receive, unsubscribe, stopManager
   ) where
 
@@ -67,6 +67,17 @@ newManagerWithSourceWait store pipelines sourceWait = do
   manager <- newManagerWith store pipelines
   pure manager {managerSourceWait = sourceWait}
 
+-- | How long a new note waits for its edge's sources before it is written,
+-- instead of 'sourceWaitMicros'. A model writer can cite only the sources it
+-- is shown, so it is worth waiting longer for them than a template writer.
+withSourceWaitMicros :: Int -> Manager -> Manager
+withSourceWaitMicros micros manager = manager {managerSourceWait = threadDelay micros}
+
+-- | Test seam for the wrap-up deadline: how long the outputs wait for notes
+-- that are still being written. Production uses 'notesWaitMicros'.
+withNotesWait :: IO () -> Manager -> Manager
+withNotesWait notesWait manager = manager {managerNotesWait = notesWait}
+
 createManager :: Store -> Pipelines -> (SessionId -> [Event] -> Either StoreException () -> IO ()) -> IO Manager
 createManager store pipelines observer = mask $ \_ -> do
   registry <- newMVar (Running Map.empty)
@@ -85,6 +96,7 @@ createManager store pipelines observer = mask $ \_ -> do
     , managerAppendObserver = observer
     , managerSourceRuntime = runtime
     , managerSourceWait = threadDelay sourceWaitMicros
+    , managerNotesWait = threadDelay notesWaitMicros
     , managerOutputs = Nothing
     }
 
@@ -97,6 +109,12 @@ sourceConcurrency = 2
 sourceQueueCapacity = 16
 sourceWaitMicros = 250000
 
+-- | At wrap-up, the outputs wait at most this long for notes that are still
+-- being written (a model note takes up to about 12 s), then they are made
+-- without them.
+notesWaitMicros :: Int
+notesWaitMicros = 30000000
+
 data Manager = Manager
   { managerStore :: Store
   , managerPipelines :: Pipelines
@@ -105,6 +123,7 @@ data Manager = Manager
   , managerAppendObserver :: SessionId -> [Event] -> Either StoreException () -> IO ()
   , managerSourceRuntime :: Maybe SourceRuntime
   , managerSourceWait :: IO ()
+  , managerNotesWait :: IO ()
   , managerOutputs :: Maybe OutputsGenerator
   }
 
@@ -139,7 +158,13 @@ data Message
   | BeginWriting NodeId
   | OutputsDone (Either Text Outputs)
     -- ^ the wrap-up outputs, or why they could not be made
+  | NotesWaitOver
+    -- ^ the wrap-up deadline for unfinished notes has passed
   | Halt
+
+-- | Whether the wrap-up outputs are held back for notes still being written.
+data NotesWait = NotWaiting | Waiting | WaitOver
+  deriving (Eq, Show)
 
 data ActorState = ActorState
   { stateSession :: Session
@@ -155,6 +180,8 @@ data ActorState = ActorState
     -- ^ the outputs worker was started for this wrapped-up session
   , stateOutputFailures :: Int
     -- ^ failed output attempts; the first failure is retried automatically
+  , stateNotesWait :: NotesWait
+    -- ^ at wrap-up, the outputs wait for unfinished notes until a deadline
   }
 
 -- | A manager whose sessions start from the offline cloud ("Drift.Model.SessionMock").
@@ -324,7 +351,7 @@ startActor manager sid history = do
   let logValue = Log (reverse history)
       session = replay logValue
       initial = ActorState session logValue (length history) Map.empty 0
-        session.sessionNextCandidateId Nothing [] Set.empty False 0
+        session.sessionNextCandidateId Nothing [] Set.empty False 0 NotWaiting
   -- Registry mutation stays masked; the actor itself runs unmasked.
   thread <- asyncWithUnmask $ \unmask ->
     unmask ((recoverWriting inbox initial >>= startOutputs inbox >>= loop inbox)
@@ -409,7 +436,7 @@ startActor manager sid history = do
               current {stateWritingStarted = Set.insert target current.stateWritingStarted} target
           loop inbox next
         Written input outcome -> do
-          next <- if current.stateSession.sessionWrapped then pure current else do
+          admitted <- if not (acceptsNotes current) then pure current else do
             entry <- case outcome of
               Right entry -> pure entry
               Left _ -> do
@@ -425,6 +452,18 @@ startActor manager sid history = do
                     broadcast current (Diagnostic LevelError "Saving the sidebar entry failed.")
                     pure current
                   Just committed -> pure committed
+          -- After wrap-up, the last unfinished note releases the outputs.
+          next <- startOutputs inbox admitted
+          loop inbox next
+        NotesWaitOver -> do
+          next <- if current.stateNotesWait /= Waiting then pure current else do
+            let missing = length (unwrittenEdges current.stateSession)
+                over = current {stateNotesWait = WaitOver}
+            -- With every note in, the last one already started the outputs.
+            if missing == 0 then pure over else do
+              broadcast current (Diagnostic LevelWarning
+                ("Making the outputs without " <> showText missing <> " note(s) that were still being written."))
+              startOutputs inbox over
           loop inbox next
         Generated token target result -> do
           next <- if token /= current.stateGeneration || current.stateSession.sessionFocus /= Just target
@@ -544,7 +583,9 @@ startActor manager sid history = do
       Just generate
         | state.stateSession.sessionWrapped
         , Nothing <- state.stateSession.sessionOutputs
-        , not state.stateOutputsStarted -> do
+        , not state.stateOutputsStarted -> awaitNotes inbox state >>= \case
+          Just held -> pure held
+          Nothing -> do
             let Log newest = state.stateLog
             worker <- async $ do
               outcome <- try $ do
@@ -559,6 +600,33 @@ startActor manager sid history = do
                   | otherwise -> atomically (writeTQueue inbox (OutputsDone (Left (describe failure))))
             pure state {stateOutputsStarted = True, stateWorkers = worker : state.stateWorkers}
       _ -> pure state
+
+    -- Holds the outputs back while a wrapped-up session still has edges without
+    -- a note, so the note being written at wrap-up reaches the draft and the
+    -- final document. Edges whose note has not started (it was waiting for
+    -- sources, which wrap-up has stopped, or the server restarted) start now.
+    -- The first hold starts the deadline; when it passes the outputs are made
+    -- anyway. Returns Nothing when the outputs may start.
+    awaitNotes inbox state = case (manager.managerPipelines.pipeWriter, unwrittenEdges state.stateSession) of
+      (Just _, missing@(_ : _)) | state.stateNotesWait /= WaitOver -> do
+        let fresh = [n | n <- missing, n `Set.notMember` state.stateWritingStarted]
+        started <- foldM
+          (\s n -> startWriting inbox s {stateWritingStarted = Set.insert n s.stateWritingStarted} n)
+          state fresh
+        if started.stateNotesWait == Waiting then pure (Just started) else do
+          timer <- async $ do
+            manager.managerNotesWait
+            atomically (writeTQueue inbox NotesWaitOver)
+          pure (Just started {stateNotesWait = Waiting, stateWorkers = timer : started.stateWorkers})
+      _ -> pure Nothing
+
+    -- Notes are admitted while exploring, and after wrap-up only while the
+    -- outputs wait for them. Without an outputs generator nothing waits.
+    acceptsNotes state
+      | not state.stateSession.sessionWrapped = True
+      | otherwise = case (manager.managerOutputs, state.stateSession.sessionOutputs) of
+          (Just _, Nothing) -> not state.stateOutputsStarted
+          _ -> False
 
     regenerate inbox state = do
       -- cancel waits for the target to finish. Run that wait outside the actor
@@ -647,6 +715,15 @@ unavailableReason = Rejection "The session could not be updated. Please try agai
 
 unixMillis :: IO Int64
 unixMillis = floor . (* 1000) <$> getPOSIXTime
+
+-- | Child nodes whose edge has no entry yet.
+unwrittenEdges :: Session -> [NodeId]
+unwrittenEdges session =
+  [ node.nodeId
+  | node <- Map.elems session.sessionNodes
+  , Just _ <- [node.nodeParent]
+  , null (entriesForNode node.nodeId session.sessionEntries)
+  ]
 
 -- | Snapshot the committed edge, including its own ancestry rather than the
 -- current focus breadcrumbs (recovered/old nodes may no longer be focused).

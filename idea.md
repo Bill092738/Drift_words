@@ -127,7 +127,7 @@ Wrap-up is an explicit button. When the user feels they've gone far enough, they
 | --- | --- | --- |
 | Decision tree | How the user got here step by step, including every fork and backtrack | None |
 | Draft | Everything in the sidebar, including low-priority and struck-through entries; a complete record of the thinking | Full list, including sources cited by struck-through entries |
-| Final | Only high-priority content, reorganized into a coherent document; backtracked nodes can serve as section structure | Only sources actually cited in the final |
+| Final | Everything not struck, reorganized into a coherent document, with promoted content weighted most; backtracked nodes can serve as section structure | Only sources actually cited in the final |
 
 The draft and final reference lists will differ: once an entry is struck through, any source it cites is excluded from the final list unless some other retained entry also cites it.
 
@@ -167,7 +167,7 @@ In data terms, one exploration is a tree plus a few auxiliary tables; every anim
 
 1. **Generate branch words:** produce candidate words from the current word, the path context, and the divergence setting, then filter them against the visited set and appearance counts. This step must be fast, since it affects the feel of the animation.
 2. **Find sources:** search the web for articles, images, audio, and other material for each new connection. Runs asynchronously; if something is found, an object drops onto the desktop, and if not, nothing is shown.
-3. **Write the organizing text:** write each relationship note and short explanation, and at wrap-up, assemble the high-priority content into the final document. Also asynchronous.
+3. **Write the organizing text:** write each relationship note and short explanation, and at wrap-up, assemble the content that was not struck into the final document, weighting promoted content most. Also asynchronous.
 
 Only the first job is on the user's interaction path. The other two queue in the background, and the user never feels they are waiting on them.
 

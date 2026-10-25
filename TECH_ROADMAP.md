@@ -247,8 +247,8 @@ For each new edge (parent word to child word), a background job:
 - **The three outputs**, each assembled as Markdown:
   - **Decision tree:** derived directly from the log, including forks and backtracks. Emitted as JSON for the interactive view and as Mermaid inside the Markdown.
   - **Draft:** every entry in log order, with struck entries rendered struck through, and the full reference list.
-  - **Final:** only high-priority entries. Revisited nodes become section headings, and the model rewrites the outline into continuous prose under the same citation constraint. References are recomputed from what the final text actually cites.
-- **Export:** Markdown by default, plus HTML and DOCX. The plan was pandoc as a library; the build instead uses a small reader for the Markdown subset the outputs produce (headings, paragraphs, emphasis, strike-through, links, one code block) and writes HTML and DOCX from it (`Drift.Output.Export`). PDF can come from printing the HTML.
+  - **Final:** every entry that is not struck; promoted entries are marked as important for the model. Revisited nodes become section headings, and the model rewrites the outline into continuous prose under the same citation constraint. References are recomputed from what the final text actually cites.
+- **Export:** Markdown by default, plus HTML and DOCX through pandoc. PDF can come from printing the HTML.
 
 ### 4.9 Persistence
 

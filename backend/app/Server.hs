@@ -9,10 +9,14 @@
 --   and optional @cloud@ makes the starting cloud. Without it the server uses
 --   the deterministic offline vocabulary ("Drift.Model.SessionMock").
 -- * @DRIFT_WRITING@: set to 0 to disable sidebar entries. By default each
---   non-root edge receives a deterministic template entry, without a model.
+--   non-root edge receives an entry: written by the config's @writing@ role
+--   when it has one, otherwise a deterministic template, without a model.
+--   With a model, a note waits up to 'modelNoteSourceWaitMicros' for its
+--   edge's sources, so it can cite them.
 -- * @DRIFT_SOURCES@: set to 0 to turn off source search. By default every
---   non-root edge searches Wikipedia and OpenAlex (no model or key needed;
---   @OPENALEX_API_KEY@ raises the OpenAlex daily budget).
+--   non-root edge searches for a mix of Wikipedia, OpenAlex and Wikimedia
+--   Commons sources (no model or key needed; @OPENALEX_API_KEY@ raises the
+--   OpenAlex daily budget).
 -- * The config's optional @final@ role writes the final document at wrap-up.
 --   Without it, or when the model fails, the final document is the kept
 --   entries' own text.
@@ -23,24 +27,27 @@
 --   client-side pages such as /playground load too.
 module Main (main) where
 
-import Control.Exception (bracket)
+import Control.Concurrent (threadDelay)
+import Control.Exception (SomeAsyncException, SomeException, bracket, displayException, fromException, throwIO, try)
 import Control.Monad (when)
 import qualified Data.Text as T
 import Drift.Api (api, server)
 import Drift.Model.Config
 import Drift.Model.OpenAICompat (RequestOptions (..), checkModelAccess)
-import Drift.Model.Provider (GenRequest (..), ModelProvider (..), isAuthFailureMessage)
+import Drift.Model.Provider (GenRequest (..), ModelProvider (..), isAuthFailureMessage, readableError)
 import Drift.Model.SessionMock (BranchGenerator, mockBranches, mockCloud)
 import Drift.Output.Assemble (modelOutputs, orElseOutputs)
 import Drift.Output.Final (Generate)
 import Drift.Pipeline.Cloud (modelCloud)
 import Drift.Pipeline.BranchService (closeBranchService, newBranchService, withParallelPrefetch)
 import Drift.Pipeline.SessionBranches (liveBranches)
-import Drift.Pipeline.Writing (templateEntry)
+import Drift.Pipeline.Writing (templateEntry, writeEntry)
+import Drift.Protocol (EntryId (..))
 import Drift.Pipeline.Sources (SourceEnv (..), defaultSourceEnv, findSources)
 import Drift.Search.Http (defaultHttpConfig, redactApiKeys, withFetch)
 import Drift.Server.SessionActor
-  (CloudGenerator, Pipelines (..), SourceSearch, newManagerWithPipelinesAndCloud, stopManager, withOutputs)
+  ( CloudGenerator, EntryWriter, Pipelines (..), SourceSearch, newManagerWithPipelinesAndCloud, stopManager
+  , withOutputs, withSourceWaitMicros )
 import Drift.Server.WebSocket (webSocketApp)
 import Drift.Store.SQLite (closeStore, openStore)
 import Network.HTTP.Types (status200, status404)
@@ -67,18 +74,21 @@ main = do
   staticDir <- maybe "../frontend/dist" id <$> lookupEnv "DRIFT_STATIC_DIR"
   frontend <- frontendApp staticDir
   finalModel <- loadFinalModel configPath
+  writer <- if writing then loadWriter configPath else Nothing <$ putStrLn "writing: disabled"
   let outputsLog = hPutStrLn stderr . ("final outputs: " <>) . T.unpack
   outputs <-
     either (die . ("final outputs: " <>) . T.unpack) pure $
       -- If building the outputs throws, fall back to model-free outputs.
       orElseOutputs <$> modelOutputs finalModel outputsLog <*> modelOutputs Nothing outputsLog
   withGenerator configPath prefetch $ \generator cloud -> withSources $ \sources -> do
-    putStrLn (if writing then "writing: deterministic template" else "writing: disabled")
     putStrLn ("session database: " <> databasePath)
+    let sourceWait = case writer of
+          Just (_, True) -> withSourceWaitMicros modelNoteSourceWaitMicros
+          _ -> id
     bracket (openStore databasePath) closeStore $ \store ->
       bracket
-        (withOutputs outputs <$> newManagerWithPipelinesAndCloud store
-          (Pipelines generator (if writing then Just templateEntry else Nothing) sources) cloud)
+        (sourceWait . withOutputs outputs <$> newManagerWithPipelinesAndCloud store
+          (Pipelines generator (fst <$> writer) sources) cloud)
         stopManager $ \manager -> do
           let backend = serve api (server manager)
               app request respond = case pathInfo request of
@@ -154,6 +164,47 @@ checkAccess cfg
           | isAuthFailureMessage why ->
               die (T.unpack why <> "\nCheck the variable " <> maybe "named by api_key_env" T.unpack (providerApiKeyEnv cfg) <> " (DRIFT_CONFIG).")
           | otherwise -> hPutStrLn stderr ("warning: could not check model access: " <> T.unpack why)
+
+-- | How long a model-written note waits for its edge's sources. Searches
+-- usually finish within this; later sources are still attached to the note.
+modelNoteSourceWaitMicros :: Int
+modelNoteSourceWaitMicros = 3000000
+
+-- | The sidebar note writer: the config's optional @writing@ role, or the
+-- template without one. The flag says whether a model writes the notes.
+-- Only names are printed: the API key never is.
+loadWriter :: Maybe FilePath -> IO (Maybe (EntryWriter, Bool))
+loadWriter configPath = do
+  writingConfig <- case configPath of
+    Nothing -> pure Nothing
+    Just path -> do
+      config <- loadModelConfig path >>= either (die . (("cannot read " <> path <> ": ") <>) . T.unpack) pure
+      either (die . (("model config " <> path <> ": ") <>) . show) pure (resolveOptionalProvider config WritingRole)
+  case writingConfig of
+    Nothing -> Just (templateEntry, False) <$ putStrLn "writing: deterministic template (no writing role)"
+    Just cfg -> do
+      provider <- createModelProvider cfg
+      putStrLn ("writing: " <> T.unpack (providerName provider) <> " " <> T.unpack (providerModel cfg))
+      let generateOnce prompt = generate provider (GenRequest prompt (providerModel cfg) 0 400) (const (pure ()))
+          logFailure why = hPutStrLn stderr ("writing: " <> T.unpack why)
+      pure (Just (writeEntry (retryOnce logFailure . generateOnce) (EntryId 0), True))
+
+-- | Runs a model call, and once more after a second if it fails, so one
+-- dropped request does not leave a template note. A rejected key is not
+-- retried, and cancellation is passed through. The last failure is logged and
+-- rethrown; 'writeEntry' then falls back to the template.
+retryOnce :: (T.Text -> IO ()) -> IO a -> IO a
+retryOnce logFailure action = attempt (1 :: Int)
+  where
+    attempt n = try action >>= \case
+      Right result -> pure result
+      Left (failure :: SomeException)
+        | Just (_ :: SomeAsyncException) <- fromException failure -> throwIO failure
+        | otherwise -> do
+            let why = readableError (T.pack (displayException failure))
+            if n < 2 && not (isAuthFailureMessage why)
+              then threadDelay 1000000 >> attempt (n + 1)
+              else logFailure ("the model failed, using a template: " <> why) >> throwIO failure
 
 -- | The model for the final document, from the config's optional @final@ role.
 -- Only names are printed: the API key never is.

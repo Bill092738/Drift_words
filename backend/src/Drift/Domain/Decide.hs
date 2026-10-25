@@ -10,6 +10,7 @@ import Data.Aeson (Value (..))
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Char (isSpace)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isNothing)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -105,9 +106,14 @@ offerBranches s n candidates = do
 
 -- | A worker proposes content only. The actor's current replayed state owns
 -- the ID and all sources attached since the worker took its snapshot.
+--
+-- An entry may still land after wrap-up, until the outputs are ready: a note
+-- that was being written when the user wrapped up belongs in the draft and
+-- the final document. Sources stop at wrap-up ('admitSource').
 admitEntry :: Session -> Entry -> Either Rejection [Event]
 admitEntry s proposed = do
-  requireEdge s proposed.node
+  require (isNothing s.sessionOutputs) "The outputs are made; no new entries can be admitted."
+  requireNode s proposed.node
   require (null (entriesForNode proposed.node s.sessionEntries)) "That edge already has an entry."
   mapM_ validCitation proposed.cites
   let eid = case Map.lookupMax s.sessionEntries of
@@ -136,7 +142,12 @@ admitSource s n draft = do
 
 requireEdge :: Session -> NodeId -> Either Rejection ()
 requireEdge s n = do
-  require (not s.sessionWrapped) "The session is wrapped up; no new sources or entries can be admitted."
+  require (not s.sessionWrapped) "The session is wrapped up; no new sources can be admitted."
+  requireNode s n
+
+-- | The node exists and has a parent, so it is the child end of an edge.
+requireNode :: Session -> NodeId -> Either Rejection ()
+requireNode s n = do
   chosen <- maybe (Left (Rejection "Cannot attach a result to an unknown node.")) Right (Map.lookup n s.sessionNodes)
   require (chosen.nodeParent /= Nothing) "A root node has no edge for a source or entry."
 

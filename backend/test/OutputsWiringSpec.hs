@@ -6,7 +6,7 @@ module OutputsWiringSpec (spec) where
 
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
-import Control.Exception (bracket, throwIO)
+import Control.Exception (bracket, finally, throwIO)
 import Data.Aeson (decode)
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Lazy.Char8 as LBS8
@@ -103,6 +103,34 @@ withDatabase action = bracket acquire removeFile action
       hClose handle
       removeFile path
       pure path
+
+-- | A manager with a note writer, optional source search and an outputs generator.
+withWriterAndOutputs
+  :: (Store -> Pipelines -> IO Manager) -> EntryWriter -> Maybe SourceSearch -> OutputsGenerator
+  -> (Store -> Manager -> IO ()) -> IO ()
+withWriterAndOutputs makeManager writer search generator action =
+  withDatabase $ \path -> bracket (openStore path) closeStore $ \store ->
+    bracket (withOutputs generator <$> makeManager store (Pipelines quiet (Just writer) search)) stopManager (action store)
+
+-- | A session with a root word and one typed child, so one edge needs a note.
+-- Returns once both words are committed.
+startWithChild :: Manager -> IO (Subscription, SessionId)
+startWithChild manager = do
+  sid <- createManagedSession manager En
+  sub <- connected manager sid
+  _ <- bounded (receive sub)
+  submit sub (ClientMsg 1 (StartWithWord "tide"))
+  _ <- awaitEvent sub (\case NodeChosen {} -> True; _ -> False)
+  submit sub (ClientMsg 2 (InsertWord "moon"))
+  _ <- awaitEvent sub (\case NodeChosen (NodeId 2) _ _ _ _ -> True; _ -> False)
+  pure (sub, sid)
+
+tag :: Event -> String
+tag = \case
+  WrappedUp -> "wrapped"
+  EntryWritten {} -> "entry"
+  OutputsReady {} -> "outputs"
+  _ -> "other"
 
 withOutputsManager :: OutputsGenerator -> (Store -> Manager -> IO ()) -> IO ()
 withOutputsManager generator action = withDatabase $ \path -> bracket (openStore path) closeStore $ \store ->
@@ -245,6 +273,70 @@ spec = describe "Wrap-up outputs" $ do
             events' <- untilOutputs sub
             [o | OutputsReady o <- events'] `shouldBe` [fakeOutputs]
             storedOutputs manager sid `shouldReturn` OutputsStored fakeOutputs
+
+    it "waits for a note still being written at wrap-up, and includes it" $ do
+      entered <- newEmptyMVar
+      release <- newEmptyMVar
+      seen <- newIORef []
+      let writer input = putMVar entered () >> takeMVar release >> templateEntry input
+          generator log' = writeIORef seen (map (.event) log') >> pure fakeOutputs
+      withWriterAndOutputs newManagerWith writer Nothing generator $ \store manager -> do
+        (sub, sid) <- startWithChild manager
+        bounded (takeMVar entered)
+        submit sub (ClientMsg 3 WrapUp)
+        held <- drain sub
+        held `shouldBe` [WrappedUp]
+        readIORef seen `shouldReturn` []
+        putMVar release ()
+        events' <- untilOutputs sub
+        length [() | EntryWritten {} <- events'] `shouldBe` 1
+        [o | OutputsReady o <- events'] `shouldBe` [fakeOutputs]
+        logSeen <- readIORef seen
+        length [() | EntryWritten {} <- logSeen] `shouldBe` 1
+        Just stored <- loadEvents store sid
+        let order = [e | Stamped {event = e} <- stored, isLate e]
+            isLate = \case WrappedUp -> True; EntryWritten {} -> True; OutputsReady {} -> True; _ -> False
+        map tag order `shouldBe` ["wrapped", "entry", "outputs"]
+
+    it "makes the outputs without a note that misses the deadline, and then drops it" $ do
+      entered <- newEmptyMVar
+      release <- newEmptyMVar
+      done <- newEmptyMVar
+      deadline <- newEmptyMVar
+      let writer input = putMVar entered () >> takeMVar release >> (templateEntry input `finally` putMVar done ())
+          makeManager store p = withNotesWait (takeMVar deadline) <$> newManagerWith store p
+      withWriterAndOutputs makeManager writer Nothing (\_ -> pure fakeOutputs) $ \store manager -> do
+        (sub, sid) <- startWithChild manager
+        bounded (takeMVar entered)
+        submit sub (ClientMsg 3 WrapUp)
+        drain sub `shouldReturn` [WrappedUp]
+        putMVar deadline ()
+        warning <- collectDiagnostic sub
+        case warning of
+          Just (Diagnostic LevelWarning why) -> Text.unpack why `shouldContain` "still being written"
+          other -> expectationFailure ("expected a warning, got " <> show other)
+        events' <- untilOutputs sub
+        [o | OutputsReady o <- events'] `shouldBe` [fakeOutputs]
+        putMVar release ()
+        bounded (takeMVar done)
+        drain sub `shouldReturn` []
+        Just stored <- loadEvents store sid
+        [() | Stamped {event = EntryWritten {}} <- stored] `shouldBe` []
+
+    it "writes the note of an edge still waiting for its sources at wrap-up" $ do
+      seen <- newIORef []
+      let search _ _ = atomically retry
+          generator log' = writeIORef seen (map (.event) log') >> pure fakeOutputs
+          -- The source wait never ends by itself: only wrap-up starts the note.
+          makeManager store p = newManagerWithSourceWait store p (atomically retry)
+      withWriterAndOutputs makeManager templateEntry (Just search) generator $ \_ manager -> do
+        (sub, _) <- startWithChild manager
+        drain sub `shouldReturn` []
+        submit sub (ClientMsg 3 WrapUp)
+        events' <- untilOutputs sub
+        length [() | EntryWritten {} <- events'] `shouldBe` 1
+        logSeen <- readIORef seen
+        length [() | EntryWritten {} <- logSeen] `shouldBe` 1
 
     it "adds nothing for a manager without a generator" $
       withDatabase $ \path -> bracket (openStore path) closeStore $ \store ->

@@ -57,9 +57,11 @@ spec = do
     it "allocates above the highest replayed source ID, including other edges" $ do
       let s = apply sibling (SourceFound (sourceAt 42 3))
       admitSource s (NodeId 2) draft `shouldBe` Right [SourceFound (sourceAt 43 2)]
-    it "rejects entry and source results after wrap-up" $ do
-      rejected (admitEntry (apply edge WrappedUp) proposed)
-      rejected (admitSource (apply edge WrappedUp) (NodeId 2) draft)
+    it "admits an entry after wrap-up until the outputs are ready, but no source" $ do
+      let wrapped = apply edge WrappedUp
+      admitEntry wrapped proposed `shouldBe` Right [EntryWritten (proposed {Entry.entryId = EntryId 1})]
+      rejected (admitEntry (apply wrapped (OutputsReady (Outputs "tree" "draft" "final"))) proposed)
+      rejected (admitSource wrapped (NodeId 2) draft)
     it "rejects unknown nodes and root nodes" $ do
       forM_ [NodeId 1, NodeId 99] $ \n -> do
         rejected (admitEntry edge (proposed {Entry.node = n}))

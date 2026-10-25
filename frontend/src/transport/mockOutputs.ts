@@ -84,7 +84,8 @@ export function mockOutputs(state: SessionState): Outputs {
     '_Offline mock: references are listed, not formatted._',
   ].join('\n\n');
 
-  const kept = entries.filter((e) => !e.struck && e.priority >= 1);
+  // Like the backend: every entry that is not struck goes into the final document.
+  const kept = entries.filter((e) => !e.struck);
   const finalRefs = references(
     kept.flatMap((e) => e.entry.cites),
     state.sources,
@@ -92,7 +93,7 @@ export function mockOutputs(state: SessionState): Outputs {
   const final = [
     heading === '' ? '# Final' : `# ${heading.charAt(0).toUpperCase()}${heading.slice(1)}`,
     kept.length === 0
-      ? '_No entries were kept at high priority._'
+      ? '_No entries were kept._'
       : kept.map((e) => `${sentence(escapeMd(e.entry.relation))} ${escapeMd(e.entry.explanation)}`.trim()).join(' '),
     ...(finalRefs.length > 0 ? ['## References', finalRefs.join('\n\n')] : []),
     '_Offline mock: the real final document is written by a model._',
