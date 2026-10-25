@@ -3,7 +3,9 @@ name:               drift
 version:            0.1.0.0
 synopsis:           Backend for Driftwords, a thinking workbench
 build-type:         Simple
-extra-source-files: data/apa.csl
+extra-source-files:
+  data/apa.csl
+  test/fixtures/*.json
 
 common shared
   default-language: GHC2021
@@ -43,11 +45,20 @@ library
     Drift.Pipeline.Cloud
     Drift.Pipeline.Prefetch
     Drift.Pipeline.SessionBranches
+    Drift.Pipeline.Sources
     Drift.Pipeline.Writing
     Drift.Protocol
     Drift.Protocol.Options
+    Drift.Search.Http
+    Drift.Search.OpenAlex
+    Drift.Search.Text
+    Drift.Search.Types
+    Drift.Search.Wikipedia
     Drift.Server.SessionActor
     Drift.Server.WebSocket
+    Drift.Sources.Csl
+    Drift.Sources.Doi
+    Drift.Sources.Relevance
     Drift.Store.SQLite
   build-depends:
     , aeson             >=2.2  && <2.4
@@ -55,6 +66,7 @@ library
     , async             >=2.2  && <2.3
     , base              >=4.20 && <5
     , bytestring        >=0.10 && <0.13
+    , case-insensitive  >=1.2  && <1.3
     , citeproc          >=0.14 && <0.15
     , containers        >=0.6  && <0.8
     , file-embed        >=0.0.15 && <0.1
@@ -70,6 +82,7 @@ library
     , time
     , transformers
     , unicode-transforms >=0.4 && <0.5
+    , vector            >=0.12 && <0.14
     , wai
     , wai-websockets
     , warp              >=3.4  && <3.5
@@ -117,6 +130,18 @@ executable drift-branches
     , optparse-applicative
     , text
 
+executable drift-sources
+  import:           shared
+  hs-source-dirs:   app
+  main-is:          Sources.hs
+  ghc-options:      -threaded -rtsopts
+  build-depends:
+    , aeson
+    , base
+    , bytestring
+    , drift
+    , text
+
 test-suite drift-test
   import:           shared
   type:             exitcode-stdio-1.0
@@ -127,6 +152,7 @@ test-suite drift-test
     BranchesSpec
     CiteSpec
     CitationsSpec
+    CslSpec
     DomainDecideSpec
     DomainPropertySpec
     DomainReplaySpec
@@ -134,16 +160,24 @@ test-suite drift-test
     EntriesSpec
     ExportSpec
     FinalSpec
+    HttpSpec
+    LiveSpec
     ModelProviderSpec
+    OpenAlexSpec
     OutputsWiringSpec
+    PipelineSpec
     PrefetchSpec
     ProtocolSpec
+    RelevanceSpec
     SchedulerSpec
     ServerSpec
     SessionActorSpec
     SessionE2ESpec
+    SourceServerFixture
     StoreSpec
+    TextSpec
     TreeSpec
+    WikipediaSpec
     WritingSpec
   ghc-options:      -threaded
   build-depends:

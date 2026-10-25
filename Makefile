@@ -5,7 +5,7 @@
 #   make server     run the backend on :8080
 #   make dev        run the frontend dev server (proxies /api to :8080)
 #   make app        build the frontend and serve the whole app from the backend on :8080
-#   make demo       the same, with Gemini behind every model role (needs GEMINI_API_KEY)
+#   make demo       model cloud/rings/embeddings/final; notes remain templates (needs GEMINI_API_KEY)
 
 .PHONY: protocol check backend-build backend-test backend-restart-test frontend-install frontend-check server dev app demo
 

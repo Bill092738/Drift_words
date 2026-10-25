@@ -1,5 +1,6 @@
-# Gemini behind every role. The key is read from GEMINI_API_KEY; never put it
-# in this file.
+# Gemini is active for the cloud, rings, embeddings and M8 final rewrite. The
+# writing role is reserved for follow-up integration; current notes are
+# templates. The key is read from GEMINI_API_KEY; never put it in this file.
 #
 #   DRIFT_CONFIG=config.gemini.yaml GEMINI_API_KEY=... cabal run drift-server
 #
@@ -7,7 +8,7 @@
 # settings Gemini 3 models need (see Drift.Model.Config): reasoning_effort low,
 # no temperature, no output-token limit. Any of them can be overridden here.
 providers:
-  # Notes and final documents: the best Flash model.
+  # Writing is future work; final is used during M8 wrap-up.
   gemini:
     kind: gemini
     model: gemini-3.8-flash

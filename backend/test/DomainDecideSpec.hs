@@ -1,16 +1,21 @@
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 
 module DomainDecideSpec (spec) where
 
 import Control.Monad (forM_)
+import Data.Aeson (object, (.=))
 import Data.Either (isLeft)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Drift.Domain.Decide
+import qualified Drift.Domain.Entries as Entries
 import Drift.Domain.State
 import Drift.Domain.Types
 import Drift.Protocol
+import qualified Drift.Protocol as Entry (Entry (..))
+import qualified Drift.Search.Types as Search
 import Test.Hspec
 
 live :: [Event] -> Session
@@ -36,6 +41,96 @@ rejected result = case result of
 
 spec :: Spec
 spec = do
+  describe "admission" $ do
+    let edge = apply root (NodeChosen (NodeId 2) (Just (NodeId 1)) "child" Branch Nothing)
+        sibling = apply edge (NodeChosen (NodeId 3) (Just (NodeId 1)) "sibling" Branch Nothing)
+        proposed = Entry (EntryId 999) (NodeId 2) "relation" "explanation" []
+        draft = Search.SourceDraft WebPage "Reference" Nothing "https://example.org/reference" Nothing Nothing
+        sourceAt sid n = Source (SourceId sid) (NodeId n) WebPage "Reference" Nothing "https://example.org/reference" Nothing Nothing
+    it "allocates the first entry ID and replaces the worker placeholder" $
+      admitEntry edge proposed `shouldBe` Right [EntryWritten (proposed {Entry.entryId = EntryId 1})]
+    it "allocates above the highest replayed entry ID rather than table size" $ do
+      let s = apply sibling (EntryWritten (Entry (EntryId 42) (NodeId 3) "old" "" []))
+      admitEntry s proposed `shouldBe` Right [EntryWritten (proposed {Entry.entryId = EntryId 43})]
+    it "allocates the first source ID" $
+      admitSource edge (NodeId 2) draft `shouldBe` Right [SourceFound (sourceAt 1 2)]
+    it "allocates above the highest replayed source ID, including other edges" $ do
+      let s = apply sibling (SourceFound (sourceAt 42 3))
+      admitSource s (NodeId 2) draft `shouldBe` Right [SourceFound (sourceAt 43 2)]
+    it "rejects entry and source results after wrap-up" $ do
+      rejected (admitEntry (apply edge WrappedUp) proposed)
+      rejected (admitSource (apply edge WrappedUp) (NodeId 2) draft)
+    it "rejects unknown nodes and root nodes" $ do
+      forM_ [NodeId 1, NodeId 99] $ \n -> do
+        rejected (admitEntry edge (proposed {Entry.node = n}))
+        rejected (admitSource edge n draft)
+    it "rejects a duplicate edge entry even when the existing entry is struck" $ do
+      let s = foldl' apply edge [EntryWritten (proposed {Entry.entryId = EntryId 7}), EntryStruck (EntryId 7)]
+      rejected (admitEntry s proposed)
+    it "rejects unknown citations" $
+      rejected (admitEntry edge (proposed {cites = [SourceId 99]}))
+    it "rejects citations attached to another edge" $ do
+      let s = apply sibling (SourceFound (sourceAt 7 3))
+      rejected (admitEntry s (proposed {cites = [SourceId 7]}))
+    it "reconciles every current same-edge source and deduplicates writer citations" $ do
+      let s = foldl' apply sibling
+            [ SourceFound (sourceAt 4 2), SourceFound (sourceAt 8 2), SourceFound (sourceAt 9 3) ]
+      admitEntry s (proposed {cites = [SourceId 8, SourceId 8]}) `shouldBe`
+        Right [EntryWritten (proposed {entryId = EntryId 1, cites = [SourceId 8, SourceId 4]})]
+    it "accepts a result for an old edge after focus moves" $ do
+      admitEntry sibling proposed `shouldBe` Right [EntryWritten (proposed {Entry.entryId = EntryId 1})]
+      admitSource sibling (NodeId 2) draft `shouldBe` Right [SourceFound (sourceAt 1 2)]
+    it "rejects scheme and host case variants of a URL on the same edge" $ do
+      let s = apply edge (SourceFound (sourceAt 1 2))
+      rejected (admitSource s (NodeId 2) (draft {Search.url = "  HTTPS://EXAMPLE.ORG/reference  "}))
+    forM_
+      [ ("path", "https://example.org/A", "https://example.org/a")
+      , ("query", "https://example.org/?Token=A", "https://example.org/?Token=a")
+      , ("fragment", "https://example.org/#Section", "https://example.org/#section")
+      , ("user info", "https://User@example.org/", "https://user@example.org/")
+      ] $ \(component, firstUrl, secondUrl) ->
+      it ("admits distinct case-sensitive URL " <> component <> " values on the same edge") $ do
+        let s = apply edge (SourceFound ((sourceAt 1 2) {url = firstUrl}))
+        admitSource s (NodeId 2) (draft {Search.url = secondUrl}) `shouldBe`
+          Right [SourceFound ((sourceAt 2 2) {url = secondUrl})]
+    it "rejects normalized DOI metadata even when publisher links differ" $ do
+      let stored = (sourceAt 1 2) {csl = Just (object ["DOI" .= ("https://doi.org/10.1234/AbC" :: Text.Text)])}
+          duplicate = draft {Search.url = "https://publisher.org/other", Search.csl = Just (object ["DOI" .= ("doi:10.1234/abc" :: Text.Text)])}
+      rejected (admitSource (apply edge (SourceFound stored)) (NodeId 2) duplicate)
+    it "matches a DOI resolver URL against DOI metadata" $ do
+      let stored = (sourceAt 1 2) {csl = Just (object ["DOI" .= ("10.1234/ABC" :: Text.Text)])}
+      rejected (admitSource (apply edge (SourceFound stored)) (NodeId 2)
+        (draft {Search.url = "https://doi.org/10.1234/abc"}))
+    it "rejects a percent-encoded DOI resolver path already present in CSL metadata" $ do
+      let stored = (sourceAt 1 2) {csl = Just (object ["DOI" .= ("10.1234/a?b" :: Text.Text)])}
+      rejected (admitSource (apply edge (SourceFound stored)) (NodeId 2)
+        (draft {Search.url = "https://doi.org/10.1234/a%3Fb"}))
+    it "falls back to normalized titles for source identity without a URL or DOI" $ do
+      let stored = (sourceAt 1 2) {url = "", title = "Straße"}
+      rejected (admitSource (apply edge (SourceFound stored)) (NodeId 2)
+        (draft {Search.url = "", Search.title = " ＳＴＲＡＳＳＥ "}))
+    it "keeps different URLs with the same title and permits a source on another edge" $ do
+      let s = apply sibling (SourceFound (sourceAt 1 2))
+      admitSource s (NodeId 3) draft `shouldBe` Right [SourceFound (sourceAt 2 3)]
+      admitSource s (NodeId 2) (draft {Search.url = "https://example.org/different"}) `shouldBe`
+        Right [SourceFound ((sourceAt 2 2) {url = "https://example.org/different"})]
+    it "admits a late source and revises the edge entry in one ordered batch, preserving curation" $ do
+      let original = proposed {Entry.entryId = EntryId 7}
+          s = foldl' apply edge [EntryWritten original, EntryPromoted (EntryId 7) 3, EntryStruck (EntryId 7)]
+          events = [SourceFound (sourceAt 1 2), EntryRevised (original {cites = [SourceId 1]})]
+      admitSource s (NodeId 2) draft `shouldBe` Right events
+      let revised = foldl' apply s events
+      fmap (\st -> (Entries.priority st, Entries.struck st, Entries.entry st))
+        (Map.lookup (EntryId 7) revised.sessionEntries) `shouldBe`
+          Just (3, True, original {cites = [SourceId 1]})
+    it "converges for sources arriving before and after the entry" $ do
+      let applyAccepted s result = either (error . show) (foldl' apply s) result
+          sourceFirst = applyAccepted edge (admitSource edge (NodeId 2) draft)
+          entryFirst = applyAccepted edge (admitEntry edge proposed)
+          sourceBeforeEntry = applyAccepted sourceFirst (admitEntry sourceFirst proposed)
+          sourceAfterEntry = applyAccepted entryFirst (admitSource entryFirst (NodeId 2) draft)
+      sourceBeforeEntry.sessionEntries `shouldBe` sourceAfterEntry.sessionEntries
+      sourceBeforeEntry.sessionSources `shouldBe` sourceAfterEntry.sessionSources
   describe "decide: words and picks" $ do
     forM_ [" ocean ", "\t\x68EE\x6797\n", "Straße"] $ \input ->
       it ("accepts one trimmed token: " <> show input) $

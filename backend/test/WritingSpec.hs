@@ -11,7 +11,9 @@ import Data.List (isSuffixOf)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
+import Drift.Domain.Decide (admitEntry)
 import Drift.Domain.Entries
+import Drift.Domain.State (apply, emptySession)
 import Drift.Pipeline.Writing
 import Drift.Protocol
 import System.Directory (listDirectory)
@@ -51,6 +53,20 @@ input ss =
 
 spec :: Spec
 spec = do
+  describe "templateEntry" $ do
+    it "writes the deterministic fallback without a provider or provisional citations" $ do
+      e <- templateEntry (input [source 3])
+      e `shouldBe` Entry (EntryId 0) (NodeId 2) "entropy \8594 information" "" []
+    it "leaves durable ID allocation to admission against replayed state" $ do
+      e <- templateEntry (input [])
+      let s = foldl' apply emptySession
+            [ NodeChosen (NodeId 1) Nothing "entropy" StartWord Nothing
+            , NodeChosen (NodeId 2) (Just (NodeId 1)) "information" Branch Nothing
+            , NodeChosen (NodeId 3) (Just (NodeId 1)) "heat" Branch Nothing
+            , EntryWritten (Entry (EntryId 17) (NodeId 3) "old" "" [])
+            ]
+      admitEntry s e `shouldBe`
+        Right [EntryWritten (Entry (EntryId 18) (NodeId 2) "entropy \8594 information" "" [])]
   describe "buildWritingPrompt" $ do
     it "lists the sources by key" $
       buildWritingPrompt (input [source 3]) `shouldSatisfy` T.isInfixOf "[@src3] Entropy (information theory) - Wikipedia"

@@ -9,13 +9,15 @@ import Control.Monad (unless, void)
 import Data.Aeson (eitherDecode, encode)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
+import Data.Char (toUpper)
 import Data.List (nub)
+import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
 import Drift.Api (CreateSessionResponse (..))
 import Drift.Domain.State (replay)
-import Drift.Domain.Types (Log (..), Session (..))
+import Drift.Domain.Types (Log (..), Placement (..), Session (..))
 import Drift.Protocol
 import Network.HTTP.Client
   ( Manager, Request (..), RequestBody (..), Response, defaultManagerSettings
@@ -30,9 +32,9 @@ import Network.WebSockets
 import System.Directory
   ( createDirectory, doesFileExist, getCurrentDirectory, getTemporaryDirectory
   , removeFile, removePathForcibly )
-import System.Environment (getEnvironment, lookupEnv)
+import System.Environment (getEnvironment, getExecutablePath, lookupEnv)
 import System.FilePath ((</>), isAbsolute, takeDirectory)
-import System.IO (IOMode (ReadWriteMode), hClose, openFile, openTempFile)
+import System.IO (IOMode (ReadWriteMode, WriteMode), hClose, openFile, openTempFile, withFile)
 import System.Info (os)
 import System.Process
   ( CreateProcess (..), ProcessHandle, StdStream (Inherit, NoStream, UseHandle), createProcess
@@ -43,7 +45,141 @@ import System.Timeout (timeout)
 import Test.Hspec
 
 spec :: Spec
-spec = describe "M1 server process restart" $
+spec = do
+  sourceSpec
+  writingSpec
+  restartSpec
+
+sourceSpec :: Spec
+sourceSpec = describe "M6 server sources" $ do
+  it "starts enabled source assembly without DRIFT_CONFIG and never prints its optional key" $ do
+    executable <- resolveServerExecutable
+    port <- reservePort
+    withTemporaryDatabase $ \databasePath -> do
+      inherited <- getEnvironment
+      let logPath = databasePath <> ".log"
+          -- Sources on (the server default), with every other setting kept offline.
+          environment = [("DRIFT_SOURCES", "1"), ("OPENALEX_API_KEY", "sentinel-openalex-secret")]
+            <> filter ((/= "DRIFT_SOURCES") . fst) (serverEnvironment Nothing port databasePath inherited)
+      withFile logPath WriteMode $ \output -> bracket
+        (createProcess (proc executable []) {env = Just environment,
+          std_in = NoStream, std_out = UseHandle output, std_err = UseHandle output})
+        (\(_, _, _, process) -> stopServer process)
+        (\_ -> waitForHealth port)
+      output <- readFile logPath
+      output `shouldSatisfy` Text.isInfixOf "sources: Wikipedia/OpenAlex (OpenAlex key present)" . Text.pack
+      output `shouldSatisfy` (not . Text.isInfixOf "sentinel-openalex-secret" . Text.pack)
+
+  it "persists fake live sources, citations and placements through real server process restart" $ do
+    executable <- getExecutablePath
+    port <- reservePort
+    withTemporaryDatabase $ \databasePath -> do
+      let runFixture action = do
+            inherited <- getEnvironment
+            bracket
+              (createProcess (proc executable ["--source-server-fixture"])
+                {env = Just (serverEnvironment Nothing port databasePath inherited),
+                 std_in = NoStream, std_out = Inherit, std_err = Inherit})
+              (\(_, _, _, process) -> stopServer process) (const action)
+      (identifier, history) <- runFixture $ do
+        waitForHealth port
+        created <- createSession port "en"
+        history <- withSession port (sessionId created) $ \connection -> do
+          initial <- receiveEvents connection
+          submitCommand connection 1 (StartWithWord "root")
+          root <- collectUntil connection (\case NodeChosen _ _ _ _ _ -> True; _ -> False)
+          submitCommand connection 2 (InsertWord "child")
+          child <- collectUntil connection isEntry
+          [source | Stamped _ _ (SourceFound source) <- child] `shouldSatisfy` (not . null)
+          [entry | Stamped _ _ (EntryWritten entry) <- child]
+            `shouldBe` [Entry (EntryId 1) (NodeId 2) "root \8594 child" "" [SourceId 1]]
+          submitCommand connection 3 (PlaceSource (SourceId 1) (Vec2 3.5 (-4.25)) 0.6)
+          placed <- collectUntil connection (\case SourcePlaced _ _ _ -> True; _ -> False)
+          submitCommand connection 4 (SetDivergence 0.33)
+          fenced <- collectUntil connection (== DivergenceSet 0.33)
+          pure (initial <> root <> child <> placed <> fenced)
+        pure (sessionId created, history)
+      runFixture $ do
+        waitForHealth port
+        withSession port identifier $ \connection -> do
+          restored <- receiveEvents connection
+          restored `shouldBe` history
+          let state = replay (Log (reverse restored))
+          Map.size (sessionSources state) `shouldBe` 1
+          Map.size (sessionEntries state) `shouldBe` 1
+          sessionSourcePlacements state `shouldBe`
+            Map.singleton (SourceId 1) (Placement (Vec2 3.5 (-4.25)) 0.6)
+          submitCommand connection 5 (InsertWord "grandchild")
+          continued <- collectUntil connection isEntry
+          [entry | Stamped _ _ (EntryWritten entry) <- continued]
+            `shouldBe` [Entry (EntryId 2) (NodeId 3) "child \8594 grandchild" "" [SourceId 2]]
+          [identifier' | Stamped _ _ (SourceFound (Source identifier' _ _ _ _ _ _ _)) <- continued]
+            `shouldBe` [SourceId 2]
+
+writingSpec :: Spec
+writingSpec = describe "M7 server writing" $ do
+  it "removes mixed-case inherited model and source configuration before offline startup" $ do
+    let inherited =
+          [ ("drift_config", "must-not-load-real-provider.yaml")
+          , ("dRiFt_SoUrCeS", "1")
+          , ("openalex_api_key", "sentinel-source-key")
+          , ("OpenAI_Api_Key", "sentinel-model-key")
+          , ("DrIfT_WrItInG", "1")
+          , ("drift_port", "9999")
+          , ("Drift_Db_Path", "inherited.sqlite")
+          , ("PATH", "test-toolchain")
+          ]
+    serverEnvironment (Just "0") 8081 "offline.sqlite" inherited `shouldBe`
+      [("DRIFT_PORT", "8081"), ("DRIFT_DB_PATH", "offline.sqlite"), ("DRIFT_SOURCES", "0"),
+       ("DRIFT_WRITING", "0"), ("PATH", "test-toolchain")]
+
+  it "defaults to template writing with no model config and replays the entry after restart" $ do
+    executable <- resolveServerExecutable
+    port <- reservePort
+    withTemporaryDatabase $ \databasePath -> do
+      (identifier, history) <- withWritingServer Nothing executable port databasePath $ do
+        waitForHealth port
+        created <- createSession port "en"
+        withSession port (sessionId created) $ \connection -> do
+          _ <- receiveEvents connection
+          submitCommand connection 1 (StartWithWord "root")
+          _ <- collectUntil connection isSeal
+          submitCommand connection 2 (InsertWord "child")
+          _ <- collectUntil connection isSeal
+          pure ()
+        -- Inspect snapshots outside the socket callback: a missing entry is
+        -- a bounded assertion failure, rather than a stalled socket read.
+        snapshot <- awaitEntryHistory port (sessionId created) 50
+        [entry | Stamped _ _ (EntryWritten entry) <- snapshot]
+          `shouldBe` [Entry (EntryId 1) (NodeId 2) "root \8594 child" "" []]
+        history <- withSession port (sessionId created) $ \connection -> do
+          replayed <- receiveEvents connection
+          submitCommand connection 3 WrapUp
+          wrapped <- collectUntil connection (== WrappedUp)
+          pure (replayed <> wrapped)
+        pure (sessionId created, history)
+      withWritingServer Nothing executable port databasePath $ do
+        waitForHealth port
+        withSession port identifier $ \connection -> receiveEvents connection `shouldReturn` history
+
+  it "disables entries explicitly with DRIFT_WRITING=0" $ do
+    executable <- resolveServerExecutable
+    port <- reservePort
+    withTemporaryDatabase $ \databasePath -> withWritingServer (Just "0") executable port databasePath $ do
+      waitForHealth port
+      created <- createSession port "en"
+      withSession port (sessionId created) $ \connection -> do
+        initial <- receiveEvents connection
+        submitCommand connection 1 (StartWithWord "root")
+        root <- collectUntil connection isSeal
+        submitCommand connection 2 (InsertWord "child")
+        child <- collectUntil connection isSeal
+        submitCommand connection 3 WrapUp
+        wrapped <- collectUntil connection (== WrappedUp)
+        filter (isEntry . eventOf) (initial <> root <> child <> wrapped) `shouldBe` []
+
+restartSpec :: Spec
+restartSpec = describe "M1 server process restart" $
   it "replays and continues an explored session across real process restarts" $ do
     executable <- resolveServerExecutable
     port <- reservePort
@@ -138,15 +274,17 @@ spec = describe "M1 server process restart" $
           map eventOf finalHistory `shouldSatisfy` elem WrappedUp
 
 withServer :: FilePath -> Int -> FilePath -> IO a -> IO a
-withServer executable port databasePath action =
-  bracket (startServer executable port databasePath) stopServer (const action)
+withServer = withWritingServer (Just "0")
 
-startServer :: FilePath -> Int -> FilePath -> IO ProcessHandle
-startServer executable port databasePath = do
+withWritingServer :: Maybe String -> FilePath -> Int -> FilePath -> IO a -> IO a
+withWritingServer writing executable port databasePath action =
+  bracket (startServer writing executable port databasePath) stopServer (const action)
+
+startServer :: Maybe String -> FilePath -> Int -> FilePath -> IO ProcessHandle
+startServer writing executable port databasePath = do
   inherited <- getEnvironment
-  let overrides = [("DRIFT_PORT", show port), ("DRIFT_DB_PATH", databasePath)]
-      environment = overrides <> filter ((`notElem` map fst overrides) . fst) inherited
-      process = (proc executable []) {env = Just environment}
+  let process = (proc executable [])
+        {env = Just (serverEnvironment writing port databasePath inherited)}
   if os == "mingw32"
     then processHandle <$> createProcess process
       { std_in = NoStream, std_out = Inherit, std_err = Inherit }
@@ -158,6 +296,19 @@ startServer executable port databasePath = do
         { std_in = UseHandle null', std_out = UseHandle null', std_err = UseHandle null' }
   where
     processHandle (_, _, _, handle) = handle
+
+-- The real process fixture and its regression share this environment builder.
+-- Keep inherited configuration out even when its spelling differs by case.
+-- Source search is on by default in the server, so tests turn it off
+-- explicitly: CI never calls Wikipedia or OpenAlex.
+serverEnvironment :: Maybe String -> Int -> FilePath -> [(String, String)] -> [(String, String)]
+serverEnvironment writing port databasePath inherited =
+  let overrides = [("DRIFT_PORT", show port), ("DRIFT_DB_PATH", databasePath), ("DRIFT_SOURCES", "0")]
+        <> maybe [] (\value -> [("DRIFT_WRITING", value)]) writing
+      offlineVariables = ["DRIFT_CONFIG", "DRIFT_SOURCES", "DRIFT_WRITING", "OPENALEX_API_KEY",
+        "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"]
+      environment = overrides <> filter ((`notElem` (offlineVariables <> map fst overrides)) . map toUpper . fst) inherited
+   in environment
 
 stopServer :: ProcessHandle -> IO ()
 stopServer handle = do
@@ -340,3 +491,13 @@ chosenNodeIds stamped = [identifier | Stamped _ _ (NodeChosen identifier _ _ _ _
 
 assertContiguous :: [Stamped] -> IO ()
 assertContiguous stamped = [number | Stamped number _ _ <- stamped] `shouldBe` [1 .. length stamped]
+
+isEntry :: Event -> Bool
+isEntry (EntryWritten _) = True
+isEntry _ = False
+
+awaitEntryHistory :: Int -> Text -> Int -> IO [Stamped]
+awaitEntryHistory port identifier remaining = do
+  history <- withSession port identifier receiveEvents
+  if any (isEntry . eventOf) history || remaining <= 0 then pure history
+    else threadDelay 10000 >> awaitEntryHistory port identifier (remaining - 1)

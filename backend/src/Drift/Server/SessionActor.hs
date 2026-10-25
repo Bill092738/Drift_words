@@ -1,12 +1,17 @@
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 
 -- | One serialized writer per session. The registry belongs to one manager;
 -- callers must not run two live managers against the same session database.
 module Drift.Server.SessionActor
-  ( BranchGenerator, CloudGenerator, OutputsGenerator, StoredOutputs (..), Manager, Subscription
-  , newManager, newManagerWithCloud, createManagedSession, subscribeSession
+  ( BranchGenerator, CloudGenerator, EntryWriter, SourceSearch, OutputsGenerator, StoredOutputs (..)
+  , Pipelines (..), Manager, Subscription
+  , newManager, newManagerWith, newManagerWithCloud, newManagerWithPipelinesAndCloud
+  , createManagedSession, subscribeSession
   , newManagerWithOutputs, withOutputs, storedOutputs
   , newManagerWithAppendObserver, subscribeSessionWithJoinObserver
+  , newManagerWithSourceWait
+  , sourceConcurrency, sourceQueueCapacity, sourceWaitMicros
   , submit, receive, unsubscribe, stopManager
   ) where
 
@@ -15,19 +20,26 @@ import Control.Concurrent.MVar (MVar, modifyMVarMasked, newMVar)
 import Control.Concurrent.STM
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeAsyncException, SomeException, catch, displayException, evaluate, finally, fromException, mask, onException, throwIO, try)
-import Control.Monad (filterM, forM_, void, when)
+import Control.Monad (filterM, foldM, forM_, forever, replicateM, void, when)
 import Data.Int (Int64)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Data.Unique (hashUnique, newUnique)
-import Drift.Domain.Decide (decide, offerBranches)
+import Drift.Domain.Decide (admitEntry, admitSource, decide, offerBranches)
+import Drift.Domain.Entries (entriesForNode)
 import Drift.Domain.State (applyStamped, replay)
 import Drift.Domain.Types
 import Drift.Model.SessionMock (BranchGenerator, mockCloud)
+import Drift.Pipeline.Writing (WritingInput (..), fallbackEntry)
+import Drift.Search.Types (SourceRequest (..), SourceDraft)
 import Drift.Protocol
 import Drift.Store.SQLite
+
+type EntryWriter = WritingInput -> IO Entry
+type SourceSearch = SourceRequest -> (SourceDraft -> IO ()) -> IO ()
 
 -- | Builds the three wrap-up outputs from a session's whole log, oldest first.
 -- It runs in a worker after the session is wrapped up, never on the actor.
@@ -37,12 +49,61 @@ type OutputsGenerator = [Stamped] -> IO Outputs
 -- call) and must not throw; it runs before any lock is taken.
 type CloudGenerator = Lang -> IO [Text]
 
+data Pipelines = Pipelines
+  { pipeBranches :: BranchGenerator
+  , pipeWriter :: Maybe EntryWriter
+  , pipeSources :: Maybe SourceSearch
+  }
+
+newManagerWith :: Store -> Pipelines -> IO Manager
+newManagerWith store pipelines = createManager store pipelines (\_ _ _ -> pure ())
+
+-- | Test seam for deterministic deadline delivery. Production always uses
+-- 'newManagerWith', whose wait remains the fixed 'sourceWaitMicros'. The wait
+-- runs in the owned timer worker, never in the actor or source pool.
+newManagerWithSourceWait :: Store -> Pipelines -> IO () -> IO Manager
+newManagerWithSourceWait store pipelines sourceWait = do
+  manager <- newManagerWith store pipelines
+  pure manager {managerSourceWait = sourceWait}
+
+createManager :: Store -> Pipelines -> (SessionId -> [Event] -> Either StoreException () -> IO ()) -> IO Manager
+createManager store pipelines observer = mask $ \_ -> do
+  registry <- newMVar (Running Map.empty)
+  runtime <- case pipelines.pipeSources of
+    Nothing -> pure Nothing
+    Just _ -> do
+      queue <- newTBQueueIO (fromIntegral sourceQueueCapacity)
+      workers <- replicateM sourceConcurrency $ asyncWithUnmask $ \unmask ->
+        unmask (forever (atomically (readTBQueue queue) >>= id))
+      pure (Just (SourceRuntime queue workers))
+  pure Manager
+    { managerStore = store
+    , managerPipelines = pipelines
+    , managerCloud = pure . mockCloud
+    , managerRegistry = registry
+    , managerAppendObserver = observer
+    , managerSourceRuntime = runtime
+    , managerSourceWait = threadDelay sourceWaitMicros
+    , managerOutputs = Nothing
+    }
+
+-- | One shared queue/pool per server, including work from different sessions.
+-- The queue contains closures, never durable jobs; a full queue drops newest.
+data SourceRuntime = SourceRuntime (TBQueue (IO ())) [Async ()]
+
+sourceConcurrency, sourceQueueCapacity, sourceWaitMicros :: Int
+sourceConcurrency = 2
+sourceQueueCapacity = 16
+sourceWaitMicros = 250000
+
 data Manager = Manager
   { managerStore :: Store
-  , managerGenerator :: BranchGenerator
+  , managerPipelines :: Pipelines
   , managerCloud :: CloudGenerator
   , managerRegistry :: MVar Registry
   , managerAppendObserver :: SessionId -> [Event] -> Either StoreException () -> IO ()
+  , managerSourceRuntime :: Maybe SourceRuntime
+  , managerSourceWait :: IO ()
   , managerOutputs :: Maybe OutputsGenerator
   }
 
@@ -70,6 +131,11 @@ data Message
     -- ^ a generation's final outcome: words, or why every attempt failed
   | Diagnose Integer ServerMsg
     -- ^ a 'Diagnostic' from a generation, delivered only if it is still current
+  | Written WritingInput (Either Text Entry)
+    -- ^ edge work remains valid when focus/generation changes
+  | SourceArrived NodeId SourceDraft
+  | SourceFailed
+  | BeginWriting NodeId
   | OutputsDone (Either Text Outputs)
     -- ^ the wrap-up outputs, or why they could not be made
   | Halt
@@ -83,6 +149,7 @@ data ActorState = ActorState
   , stateNextCandidate :: CandidateId
   , stateCurrentWorker :: Maybe (Async ())
   , stateWorkers :: [Async ()]
+  , stateWritingStarted :: Set.Set NodeId
   , stateOutputsStarted :: Bool
     -- ^ the outputs worker was started for this wrapped-up session
   }
@@ -93,8 +160,13 @@ newManager store generator = newManagerWithAppendObserver store generator (\_ _ 
 
 -- | A manager whose sessions start from the given cloud generator.
 newManagerWithCloud :: Store -> BranchGenerator -> CloudGenerator -> IO Manager
-newManagerWithCloud store generator cloud = do
-  manager <- newManager store generator
+newManagerWithCloud store generator cloud =
+  newManagerWithPipelinesAndCloud store (Pipelines generator Nothing Nothing) cloud
+
+-- | Full live pipelines whose sessions use a custom cloud generator.
+newManagerWithPipelinesAndCloud :: Store -> Pipelines -> CloudGenerator -> IO Manager
+newManagerWithPipelinesAndCloud store pipelines cloud = do
+  manager <- newManagerWith store pipelines
   pure manager {managerCloud = cloud}
 
 -- | After a session is wrapped up the generator builds its outputs, which are
@@ -113,9 +185,8 @@ newManagerWithOutputs store generator outputs = withOutputs outputs <$> newManag
 newManagerWithAppendObserver
   :: Store -> BranchGenerator
   -> (SessionId -> [Event] -> Either StoreException () -> IO ()) -> IO Manager
-newManagerWithAppendObserver store generator observer = do
-  registry <- newMVar (Running Map.empty)
-  pure (Manager store generator (pure . mockCloud) registry observer Nothing)
+newManagerWithAppendObserver store generator observer =
+  createManager store (Pipelines generator Nothing Nothing) observer
 
 data StoredOutputs = NoSuchSession | OutputsNotReady | OutputsStored Outputs
   deriving (Eq, Show)
@@ -236,6 +307,9 @@ stopManager manager = do
         atomically $ forM_ (Map.elems actors) $ \actor -> do
           writeTVar actor.actorAlive False
           writeTQueue actor.actorInbox Halt
+        -- Cancel and join provider work before the caller can close its Fetch.
+        forM_ manager.managerSourceRuntime $ \(SourceRuntime _ workers) ->
+          mapConcurrently_ cancel workers
         mapM_ (void . waitCatch . actorThread) (Map.elems actors)
       pure (Stopped job, job)
   wait job
@@ -247,10 +321,11 @@ startActor manager sid history = do
   let logValue = Log (reverse history)
       session = replay logValue
       initial = ActorState session logValue (length history) Map.empty 0
-        session.sessionNextCandidateId Nothing [] False
+        session.sessionNextCandidateId Nothing [] Set.empty False
   -- Registry mutation stays masked; the actor itself runs unmasked.
   thread <- asyncWithUnmask $ \unmask ->
-    unmask ((startOutputs inbox initial >>= loop inbox) `finally` atomically (writeTVar alive False))
+    unmask ((recoverWriting inbox initial >>= startOutputs inbox >>= loop inbox)
+      `finally` atomically (writeTVar alive False))
   pure (Actor inbox alive thread)
   where
     loop inbox state = do
@@ -280,8 +355,12 @@ startActor manager sid history = do
               persisted <- commit current events
               case persisted of
                 Nothing -> reject subscription message.req unavailableReason >> pure current
-                Just committed -> if any changesGeneration events
-                  then regenerate inbox committed >>= startOutputs inbox else pure committed
+                Just committed -> do
+                  writing <- foldM (startEdge inbox) committed
+                    [target | NodeChosen target (Just _) _ _ _ <- events]
+                  generated <- if any changesGeneration events
+                    then regenerate inbox writing else pure writing
+                  startOutputs inbox generated
           loop inbox next
         OutputsDone result -> do
           next <- case result of
@@ -298,6 +377,42 @@ startActor manager sid history = do
         Diagnose token diagnostic -> do
           when (token == current.stateGeneration) (broadcast current diagnostic)
           loop inbox current
+        SourceFailed -> do
+          when (not current.stateSession.sessionWrapped) $
+            broadcast current (Diagnostic LevelWarning "Source search failed; continuing without new sources.")
+          loop inbox current
+        SourceArrived target draft -> do
+          next <- case admitSource current.stateSession target draft of
+            Left _ -> pure current
+            Right batch -> commit current batch >>= \case
+              Nothing -> do
+                broadcast current (Diagnostic LevelError "Saving the source failed.")
+                pure current
+              Just committed -> pure committed
+          loop inbox next
+        BeginWriting target -> do
+          next <- if current.stateSession.sessionWrapped || target `Set.member` current.stateWritingStarted
+            then pure current else startWriting inbox
+              current {stateWritingStarted = Set.insert target current.stateWritingStarted} target
+          loop inbox next
+        Written input outcome -> do
+          next <- if current.stateSession.sessionWrapped then pure current else do
+            entry <- case outcome of
+              Right entry -> pure entry
+              Left _ -> do
+                broadcast current (Diagnostic LevelWarning "Entry writing failed; using a template.")
+                pure (fallbackEntry (EntryId 0) input)
+            -- A writer can propose text/citations, but it cannot redirect an
+            -- edge job to another node or allocate a durable ID.
+            if entry.node /= input.node then pure current else
+              case admitEntry current.stateSession entry of
+                Left _ -> pure current
+                Right batch -> commit current batch >>= \case
+                  Nothing -> do
+                    broadcast current (Diagnostic LevelError "Saving the sidebar entry failed.")
+                    pure current
+                  Just committed -> pure committed
+          loop inbox next
         Generated token target result -> do
           next <- if token /= current.stateGeneration || current.stateSession.sessionFocus /= Just target
               || current.stateSession.sessionWrapped
@@ -346,6 +461,69 @@ startActor manager sid history = do
             when active (writeTQueue subscription.subscriptionOutput (Events stamped))
           pure (Just committed)
 
+    recoverWriting inbox state
+      | state.stateSession.sessionWrapped = pure state
+      | otherwise = foldM (startEdge inbox) state
+          [ node.nodeId
+          | node <- Map.elems state.stateSession.sessionNodes
+          , Just _ <- [node.nodeParent]
+          , null (entriesForNode node.nodeId state.stateSession.sessionEntries)
+          ]
+
+    startEdge inbox state target = case writingInput state.stateSession target of
+      Nothing -> pure state
+      Just input -> case (manager.managerSourceRuntime, manager.managerPipelines.pipeSources) of
+        (Just (SourceRuntime queue _), Just search) -> do
+          let request = SourceRequest (Just input.fromWord) input.toWord input.path input.lang
+              deliver draft = do
+                -- Provider values may contain lazy failures; evaluate outside
+                -- the actor, before putting any proposal in its inbox.
+                _ <- evaluate (length (show draft))
+                atomically (writeTQueue inbox (SourceArrived target draft))
+              job = do
+                outcome <- try (search request deliver >>= evaluate)
+                case outcome of
+                  Left (failure :: SomeException)
+                    | Just _ <- fromException @SomeAsyncException failure -> throwIO failure
+                    | otherwise -> atomically (writeTQueue inbox SourceFailed)
+                  Right () -> pure ()
+                atomically (writeTQueue inbox (BeginWriting target))
+          accepted <- atomically $ do
+            full <- isFullTBQueue queue
+            if full then pure False else writeTBQueue queue job >> pure True
+          if accepted then do
+            timer <- async $ do
+              manager.managerSourceWait
+              atomically (writeTQueue inbox (BeginWriting target))
+            pure state {stateWorkers = timer : state.stateWorkers}
+          else do
+            broadcast state (Diagnostic LevelWarning "Source queue is full; skipping the newest search.")
+            atomically (writeTQueue inbox (BeginWriting target))
+            pure state
+        _ -> do
+          atomically (writeTQueue inbox (BeginWriting target))
+          pure state
+
+    startWriting inbox state target = case manager.managerPipelines.pipeWriter of
+      Nothing -> pure state
+      Just writer -> case writingInput state.stateSession target of
+        Nothing -> pure state
+        Just input -> do
+          worker <- async $ do
+            outcome <- try $ do
+              entry <- writer input
+              -- Force every field in the worker, including lazy provider text
+              -- and citation IDs, so a bad result cannot kill the actor.
+              _ <- evaluate (length (show entry))
+              pure entry
+            result <- case outcome of
+              Right entry -> pure (Right entry)
+              Left (failure :: SomeException)
+                | Just _ <- fromException @SomeAsyncException failure -> throwIO failure
+                | otherwise -> pure (Left "Entry writing failed.")
+            atomically (writeTQueue inbox (Written input result))
+          pure state {stateWorkers = worker : state.stateWorkers}
+
     -- Once a session is wrapped up and has no outputs yet, build them in a
     -- worker (the model may be slow) and hand the result back through the inbox.
     -- Branch generation stops at wrap-up, so nothing else competes for the model.
@@ -386,7 +564,7 @@ startActor manager sid history = do
             let attempt :: Int -> IO (Either Text [Text])
                 attempt n = do
                   result <- try $ do
-                    generated <- manager.managerGenerator state.stateSession target
+                    generated <- manager.managerPipelines.pipeBranches state.stateSession target
                     -- Force the result spine and Text values in the worker, keeping
                     -- delayed provider exceptions away from the actor's pure fold.
                     _ <- evaluate (sum (map Text.length generated))
@@ -452,3 +630,24 @@ unavailableReason = Rejection "The session could not be updated. Please try agai
 
 unixMillis :: IO Int64
 unixMillis = floor . (* 1000) <$> getPOSIXTime
+
+-- | Snapshot the committed edge, including its own ancestry rather than the
+-- current focus breadcrumbs (recovered/old nodes may no longer be focused).
+writingInput :: Session -> NodeId -> Maybe WritingInput
+writingInput session target = do
+  child <- Map.lookup target session.sessionNodes
+  parentId <- child.nodeParent
+  parent <- Map.lookup parentId session.sessionNodes
+  language <- session.sessionLanguage
+  pure WritingInput
+    { node = target
+    , fromWord = parent.nodeWord
+    , toWord = child.nodeWord
+    , path = ancestry parent
+    , origin = child.nodeOrigin
+    , lang = language
+    , sources = filter (\source -> source.node == target) (Map.elems session.sessionSources)
+    }
+  where
+    ancestry node = maybe [] ancestry (node.nodeParent >>= (`Map.lookup` session.sessionNodes))
+      <> [node.nodeWord]

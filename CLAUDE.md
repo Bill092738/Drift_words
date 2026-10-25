@@ -33,7 +33,7 @@ The desk runs on the M3 engine (`frontend/src/engine/`, behind `engine/api.ts`).
 | Regenerate TS types and fixtures | `make protocol` |
 | Backend server on :8080 | `make server` (offline vocabulary; set `DRIFT_CONFIG` for a model) |
 | Whole app from the backend on :8080 | `make app`, then open `/?live` |
-| The demo, with Gemini behind every model role | `GEMINI_API_KEY=... make demo`, then open `/?live` |
+| The demo, with Gemini cloud/rings/embeddings/final and template notes | `GEMINI_API_KEY=... make demo`, then open `/?live` |
 | Frontend dev server (proxies `/api` to :8080) | `make dev` |
 | Backend tests only | `cd backend && cabal test` |
 | Frontend tests only | `cd frontend && pnpm test` |

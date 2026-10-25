@@ -1,5 +1,4 @@
 packages: .
-          sources
 
 -- Build zlib from its bundled C sources, so zlib1g-dev is not required.
 -- Work around an aeson-typescript build failure with string-interpolate 1.0.

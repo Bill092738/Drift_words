@@ -16,6 +16,7 @@ module Drift.Pipeline.Sources
   , sanitize
   ) where
 
+import Control.Applicative ((<|>))
 import Control.Concurrent.Async (mapConcurrently)
 import Control.Concurrent.MVar (MVar, modifyMVar, newMVar)
 import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
@@ -27,7 +28,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Drift.Search.Http (Fetch, FetchError)
 import Drift.Search.OpenAlex (searchOpenAlex)
-import Drift.Search.Text (isWebUrl, normalizeKey)
+import Drift.Search.Text (isWebUrl, normalizeDoi, normalizeKey, normalizeUrl)
 import Drift.Search.Types (Hit (..), SourceDraft (..), SourceRequest (..))
 import Drift.Search.Wikipedia (searchWikipedia)
 import Drift.Sources.Doi (fetchCsl)
@@ -150,10 +151,10 @@ findSources env req emit = do
 -- | The identity of a source, for dropping duplicates: its DOI, else its link,
 -- else its title.
 dedupeKey :: Hit -> Text
-dedupeKey h = case h.hitDoi of
+dedupeKey h = case (h.hitDoi >>= normalizeDoi) <|> normalizeDoi h.hitDraft.url of
   Just d -> "doi:" <> d
   Nothing
-    | not (T.null h.hitDraft.url) -> "url:" <> normalizeKey h.hitDraft.url
+    | not (T.null h.hitDraft.url) -> "url:" <> normalizeUrl h.hitDraft.url
     | otherwise -> "title:" <> normalizeKey h.hitDraft.title
 
 -- | The last check before a source can reach the desk: a web link and a title.

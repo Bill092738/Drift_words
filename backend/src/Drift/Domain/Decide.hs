@@ -1,18 +1,25 @@
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 
--- | Pure command validation and admission of an actor-owned branch result.
-module Drift.Domain.Decide (decide, offerBranches) where
+-- | Pure command validation and admission of actor-owned pipeline results.
+module Drift.Domain.Decide (decide, offerBranches, admitEntry, admitSource) where
 
+import Control.Applicative ((<|>))
 import Control.Monad (unless, when)
+import Data.Aeson (Value (..))
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Char (isSpace)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Drift.Domain.Entries (decideCuration)
+import Drift.Domain.Entries (decideCuration, entriesForNode)
 import Drift.Domain.Types
 import Drift.Domain.Word (cap, wordKey)
 import Drift.Protocol
+import Drift.Pipeline.Writing (reviseForSource)
+import Drift.Search.Text (normalizeDoi, normalizeKey, normalizeUrl)
+import Drift.Search.Types (SourceDraft, toSource)
 
 decide :: Session -> Command -> Either Rejection [Event]
 decide s command = case command of
@@ -95,6 +102,59 @@ offerBranches s n candidates = do
        in if Set.member key seenWords || Set.member key s.sessionVisited || count >= cap s.sessionDivergence
           then (Set.insert key seenWords, accepted)
           else (Set.insert key seenWords, c : accepted)
+
+-- | A worker proposes content only. The actor's current replayed state owns
+-- the ID and all sources attached since the worker took its snapshot.
+admitEntry :: Session -> Entry -> Either Rejection [Event]
+admitEntry s proposed = do
+  requireEdge s proposed.node
+  require (null (entriesForNode proposed.node s.sessionEntries)) "That edge already has an entry."
+  mapM_ validCitation proposed.cites
+  let eid = case Map.lookupMax s.sessionEntries of
+        Nothing -> EntryId 1
+        Just (EntryId previous, _) -> EntryId (previous + 1)
+      current = [src.sourceId | src <- Map.elems s.sessionSources, src.node == proposed.node]
+      citations = foldl' (\acc sid -> if sid `elem` acc then acc else acc <> [sid]) [] (proposed.cites <> current)
+  pure [EntryWritten (proposed {entryId = eid, cites = citations})]
+  where
+    validCitation sid = do
+      src <- maybe (Left (Rejection "An entry cites an unknown source.")) Right (Map.lookup sid s.sessionSources)
+      require (src.node == proposed.node) "An entry may only cite sources belonging to its edge."
+
+-- | Admit a source once per edge, atomically attaching it to any existing
+-- entry. EntryRevised changes only content, so replay retains curation.
+admitSource :: Session -> NodeId -> SourceDraft -> Either Rejection [Event]
+admitSource s n draft = do
+  requireEdge s n
+  let sid = case Map.lookupMax s.sessionSources of
+        Nothing -> SourceId 1
+        Just (SourceId previous, _) -> SourceId (previous + 1)
+      src = toSource sid n draft
+      existing = filter (\old -> old.node == n) (Map.elems s.sessionSources)
+  require (all ((/= sourceIdentity src) . sourceIdentity) existing) "That source already belongs to this edge."
+  pure (SourceFound src : reviseForSource s.sessionEntries src)
+
+requireEdge :: Session -> NodeId -> Either Rejection ()
+requireEdge s n = do
+  require (not s.sessionWrapped) "The session is wrapped up; no new sources or entries can be admitted."
+  chosen <- maybe (Left (Rejection "Cannot attach a result to an unknown node.")) Right (Map.lookup n s.sessionNodes)
+  require (chosen.nodeParent /= Nothing) "A root node has no edge for a source or entry."
+
+-- | DOI metadata and resolver links share an identity; otherwise use the
+-- canonical URL, falling back to the title for replayed sources without one.
+sourceIdentity :: Source -> Text
+sourceIdentity src = case metadataDoi <|> normalizeDoi src.url of
+  Just doi -> "doi:" <> doi
+  Nothing
+    | not (Text.null urlKey) -> "url:" <> urlKey
+    | otherwise -> "title:" <> normalizeKey src.title
+  where
+    urlKey = normalizeUrl src.url
+    metadataDoi = case src.csl of
+      Just (Object fields) -> case KeyMap.lookup "DOI" fields of
+        Just (String doi) -> normalizeDoi doi
+        _ -> Nothing
+      _ -> Nothing
 
 validWord :: Text -> Either Rejection Text
 validWord input = do

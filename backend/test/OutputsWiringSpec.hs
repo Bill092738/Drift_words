@@ -16,7 +16,9 @@ import qualified Data.Text.Encoding as TE
 import Drift.Api (api, server)
 import Drift.Domain.Types (SessionId (..))
 import Drift.Output.Assemble (modelOutputs)
+import Drift.Pipeline.Writing (templateEntry)
 import Drift.Protocol
+import Drift.Search.Types (SourceDraft (..))
 import Drift.Server.SessionActor
 import Drift.Server.WebSocket (webSocketApp)
 import Drift.Store.SQLite
@@ -82,6 +84,16 @@ drain sub = do
     Just _ -> drain sub
     Nothing -> pure []
 
+awaitEvent :: Subscription -> (Event -> Bool) -> IO [Event]
+awaitEvent sub predicate = bounded (go [])
+  where
+    go seen = receive sub >>= \case
+      Events batch ->
+        let new = map (.event) batch
+            all' = seen <> new
+         in if any predicate new then pure all' else go all'
+      _ -> go seen
+
 withDatabase :: (FilePath -> IO a) -> IO a
 withDatabase action = bracket acquire removeFile action
   where
@@ -118,6 +130,38 @@ spec = describe "Wrap-up outputs" $ do
         -- And it is durable.
         Just stored <- loadEvents store sid
         [o | Stamped {event = OutputsReady o} <- stored] `shouldBe` [fakeOutputs]
+
+    it "includes committed M6 sources and M7 template entries in the M8 output snapshot" $ do
+      seen <- newIORef []
+      withDatabase $ \path -> bracket (openStore path) closeStore $ \store -> do
+        let branches _ _ = pure ["moon"]
+            cloud _ = pure ["tide"]
+            search _ emit = emit (SourceDraft Article "Moon and tides" (Just "Nature") "https://example.org/moon" Nothing Nothing)
+            pipelines = Pipelines branches (Just templateEntry) (Just search)
+            outputs log' = writeIORef seen (map (.event) log') >> pure fakeOutputs
+        bracket (withOutputs outputs <$> newManagerWithPipelinesAndCloud store pipelines cloud) stopManager $ \manager -> do
+          sid <- createManagedSession manager En
+          sub <- connected manager sid
+          _ <- bounded (receive sub)
+          submit sub (ClientMsg 1 (Pick (CandidateId 1)))
+          offered <- awaitEvent sub (\case BranchesOffered {} -> True; _ -> False)
+          child <- case [candidate | BranchesOffered _ [candidate] <- offered] of
+            [candidate] -> pure candidate
+            other -> expectationFailure ("expected one branch candidate, got " <> show other) >> fail "invalid branch ring"
+          submit sub (ClientMsg 2 (Pick child.candidateId))
+          _ <- awaitEvent sub (\case SourceFound {} -> True; _ -> False)
+          written <- awaitEvent sub (\case EntryWritten {} -> True; _ -> False)
+          [entry.cites | EntryWritten entry <- written] `shouldBe` [[SourceId 1]]
+          submit sub (ClientMsg 3 WrapUp)
+          events' <- untilOutputs sub
+          [o | OutputsReady o <- events'] `shouldBe` [fakeOutputs]
+          logSeen <- readIORef seen
+          last logSeen `shouldBe` WrappedUp
+          length [() | SourceFound {} <- logSeen] `shouldBe` 1
+          [entry.cites | EntryWritten entry <- logSeen] `shouldBe` [[SourceId 1]]
+          storedOutputs manager sid `shouldReturn` OutputsStored fakeOutputs
+          Just stored <- loadEvents store sid
+          [o | Stamped {event = OutputsReady o} <- stored] `shouldBe` [fakeOutputs]
 
     it "does not build them again for a second wrap-up" $ do
       calls <- newMVar (0 :: Int)

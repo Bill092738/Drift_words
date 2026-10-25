@@ -6,7 +6,7 @@ Driftwords is a browser-based tool for the moments when you want to do something
 
 Language models and web search run in the background. You never talk to an AI.
 
-> **Status:** M1 to M5 are in place: the frontend runs a live session against the backend, with model-generated rings when a model is configured. M6 source search and the M7 writing pipeline are implemented as libraries and in the UI, but the live server does not run them yet. M8 is in: "Wrap up" ends a session, the server builds the decision tree, draft and final document (`Drift.Output.*`) and sends them as `OutputsReady`, the outputs view shows them, and downloads are Markdown, HTML and Word (`GET /api/sessions/:id/export/{tree,draft,final}/{md,html,docx}`). Because the live server writes no entries or sources yet, a live session's draft and final document are empty until M6 and M7 are wired in; the decision tree is complete. "Driftwords" is a working title.
+> **Status:** M1 to M8 are integrated. The M6 live English MVP runs opt-in Wikipedia/OpenAlex searches; M7 writes persistent template notes for every non-root edge; M8 turns the durable tree, notes and citations into a decision tree, draft and final document with Markdown, HTML and Word downloads. Gemini can generate the cloud, rings, embeddings and final rewrite; Gemini note writing, model-backed relevance and additional source providers remain follow-ups. "Driftwords" is a working title.
 
 ## Documents
 
@@ -23,7 +23,7 @@ Language models and web search run in the background. You never talk to an AI.
 | UI chrome | React 19 (sidebar, controls, outputs) |
 | Backend | Haskell: Servant/Warp, STM, event-sourced domain stored as a persistent linked list |
 | AI | A model-agnostic provider slot (any OpenAI-compatible endpoint, local or hosted), with speculative prefetch and embedding-based divergence |
-| Sources and citations | Wikipedia, Wikimedia Commons, OpenAlex, Crossref, arXiv; references rendered by `citeproc`; export with `pandoc` |
+| Sources and citations | Live English MVP: Wikipedia and OpenAlex with retrieved CSL metadata and heuristic relevance. Wikimedia Commons, Crossref, arXiv and model-backed relevance are planned; `citeproc`/`pandoc` belong to the output roadmap |
 | Persistence | SQLite event log (save, resume, replay) |
 
 See [TECH_ROADMAP.md](TECH_ROADMAP.md) for the reasoning behind each choice.
@@ -54,6 +54,14 @@ Create a session with `POST /api/sessions` and JSON body `{"lang":"en"}`. The fr
 
 By default the backend uses a deterministic offline vocabulary: a fixed initial word cloud and six branch words, each with the selected node ID appended, so sessions can continue at any depth without a model.
 
+Each non-root edge also gets one deterministic note, `fromWord → toWord`, with an empty explanation. Notes arrive quietly: the sidebar stays closed until opened. Promote, strike and restore are persisted. `DRIFT_WRITING=0` explicitly disables note production, including recovery of missing notes after restart; otherwise the template writer runs independently of `DRIFT_CONFIG`. A `writing` role does not enable model writing in this server. The provider-independent `EntryWriter` seam is ready for the separate Gemini integration.
+
+Source search is on by default: every non-root edge searches Wikipedia and OpenAlex. It needs no model configuration and no key; set `OPENALEX_API_KEY` to raise the OpenAlex daily budget, and `DRIFT_SOURCES=0` to turn search off (for example with no network). The server shares one HTTP cache and rate-limit environment, runs at most two edge searches with sixteen pending jobs, and skips the newest search with a warning when that queue is full. Its note is still written. Writing waits for search completion or 250ms, whichever comes first; later sources revise the note's citations. Search failures or zero results are normal and do not stop exploration. See [source behavior and limits](backend/sources/README.md).
+
+The frontend creates English sessions. Retrieval currently uses an English word-overlap heuristic, not semantic or model judgement. Crossref search, arXiv search, Commons retrieval, Chinese retrieval, model-backed relevance and Gemini writing/quality acceptance are deferred. Fixture references to those providers are recorded UI test data, not evidence of live provider support.
+
+For an offline session, leave `DRIFT_CONFIG` unset and set `DRIFT_SOURCES=0`; leave `DRIFT_WRITING` unset to keep template notes. The tests always start the server with `DRIFT_SOURCES=0`, so CI never calls the source APIs. Startup reports modes and whether an OpenAlex key is present, never the key value. HTTP diagnostics redact `api_key` values.
+
 To generate rings with a model, set `DRIFT_CONFIG` to a model configuration (see `backend/config.gemini.yaml` and `backend/config.example.yaml`). Its `branches` role generates the rings, and its optional `embeddings` role drives divergence selection. After each ring, the server prefetches the ring of every offered word, so a pick usually finds its ring ready; set `DRIFT_PREFETCH=0` to save model calls. An optional `cloud` role makes each session's starting cloud; without it the cloud is the fixed offline list.
 
 ### Run on Gemini (the demo setup)
@@ -70,7 +78,8 @@ Open `http://localhost:8080/?live`. `backend/config.gemini.yaml` routes the role
 | Role | Model | Why |
 | --- | --- | --- |
 | `branches`, `cloud` | `gemini-3.1-flash-lite` | about 1.4 s per answer; rings and the cloud are on the critical path |
-| `writing`, `final` | `gemini-3.8-flash` | better text; not on the critical path (1.5 to 12 s per answer) |
+| `writing` | `gemini-3.8-flash` | configured for future integration; current notes are deterministic templates |
+| `final` | `gemini-3.8-flash` | rewrites the M8 final document; falls back to kept note text on failure |
 | `embeddings` | `gemini-embedding-001` | divergence band; about 0.5 s per ring |
 
 To put 3.8 Flash behind the rings too, set `branches: gemini` in that file. Expect a 4 to 10 s wait whenever a pick misses the prefetch (the first pick, a backtrack, a typed word).
@@ -86,6 +95,8 @@ Prefetch makes about 12 extra requests per pick (6 rings and 6 embedding calls),
 For local development with both processes running separately, use `./start.sh` on Linux/macOS or double-click `start.cmd` on Windows. Each launcher checks that `cabal`, `pnpm`, and the expected project files are available before starting the backend and frontend. The Windows launcher opens one Command Prompt window per service.
 
 Run backend tests from `backend/` with `cabal build drift-server && cabal test drift-test --test-show-details=direct`. The real child-process persistence test can be run from the repository root with `make backend-restart-test`; it builds the server, resolves the executable with `cabal list-bin drift-server`, and launches three server processes against one temporary database. Run `make check` for backend build/tests and frontend checks.
+
+M6/M7 verification uses no model provider or real source API: saved-response source specs, injected source/writer actor tests, and a fake-source child-process integration test cover admission, citations, bounded work, persistence and WebSocket delivery. Browser acceptance covers live template notes and curation through reload and real backend restart; recorded fixtures cover references, locating/focusing sources, mobile sheets, long prose and reduced motion. Regenerate contracts with `make protocol` and require no semantic diff. The opt-in `DRIFT_LIVE_TESTS=1` source smoke is separate and non-gating. These checks establish behavior, not model quality or real-provider availability. See [M6 completion](docs/todo/M6-sources-live.md) and [M7 completion](docs/todo/M7-sidebar-live.md).
 
 Build notes, verified on Ubuntu 26.04 with GHC 9.10.3:
 

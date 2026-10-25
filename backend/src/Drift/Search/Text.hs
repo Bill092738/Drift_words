@@ -6,6 +6,7 @@ module Drift.Search.Text
   , decodeEntities
   , plainText
   , normalizeKey
+  , normalizeUrl
   , tokens
   , stem
   , normalizeDoi
@@ -14,11 +15,12 @@ module Drift.Search.Text
   ) where
 
 import Data.Char (chr, isAlphaNum, isHexDigit, isSpace)
+import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Text.Normalize (NormalizationMode (NFKC), normalize)
-import Network.HTTP.Types.URI (urlEncode)
+import Network.HTTP.Types.URI (urlDecode, urlEncode)
 import Numeric (readHex)
 
 -- | Removes every @<...>@ tag. An unclosed @<@ keeps the rest as text.
@@ -73,6 +75,20 @@ plainText = T.unwords . T.words . decodeEntities . stripHtml
 normalizeKey :: Text -> Text
 normalizeKey = T.strip . T.toCaseFold . normalize NFKC
 
+-- | A web URL identity folds only the scheme and host. User info, path,
+-- query and fragment retain their case because it can identify a different
+-- resource. Splitting the authority first also handles URLs without a path.
+normalizeUrl :: Text -> Text
+normalizeUrl raw =
+  let trimmed = T.strip raw
+      (scheme, rest) = T.breakOn "://" trimmed
+   in if T.null rest
+        then trimmed
+        else
+          let (authority, suffix) = T.break (`elem` ("/?#" :: String)) (T.drop 3 rest)
+              (userInfo, hostPort) = T.breakOnEnd "@" authority
+           in T.toLower scheme <> "://" <> userInfo <> T.toLower hostPort <> suffix
+
 -- | Lower-case words, split on anything that is not a letter or digit.
 tokens :: Text -> [Text]
 tokens = filter (not . T.null) . T.split (not . isAlphaNum) . normalizeKey
@@ -86,16 +102,29 @@ stem w
 
 -- | A DOI without the resolver prefix, lower case, or Nothing if the text is
 -- not a DOI. DOIs are case-insensitive, so lower case is the canonical form.
+-- Resolver paths are percent-decoded once; bare DOI metadata is literal.
 normalizeDoi :: Text -> Maybe Text
-normalizeDoi raw =
+normalizeDoi raw = do
   let t = T.toLower (T.strip raw)
-      stripped = foldr (\p acc -> maybe acc id (T.stripPrefix p acc)) t prefixes
-      doi = T.strip stripped
-   in if "10." `T.isPrefixOf` doi && T.any (== '/') doi && not (T.any isSpace doi)
-        then Just doi
-        else Nothing
+      resolverPath = listToMaybe [path | prefix <- prefixes, Just path <- [T.stripPrefix prefix t]]
+  stripped <- case resolverPath of
+    Nothing -> Just (fromMaybe t (T.stripPrefix "doi:" t))
+    Just path ->
+      let encoded = T.takeWhile (\c -> c /= '?' && c /= '#') path
+       in if validEscapes (T.unpack encoded)
+            then either (const Nothing) Just (TE.decodeUtf8' (urlDecode False (TE.encodeUtf8 encoded)))
+            else Nothing
+  let doi = T.toLower (T.strip stripped)
+  if "10." `T.isPrefixOf` doi && T.any (== '/') doi && not (T.any isSpace doi)
+    then Just doi
+    else Nothing
   where
-    prefixes = ["doi:", "https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "http://dx.doi.org/"]
+    prefixes = ["https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "http://dx.doi.org/"]
+    validEscapes = \case
+      [] -> True
+      '%' : a : b : rest -> isHexDigit a && isHexDigit b && validEscapes rest
+      '%' : _ -> False
+      _ : rest -> validEscapes rest
 
 -- | The https link for a normalized DOI. A DOI may contain characters that
 -- mean something in a URL (@?@, @#@, @%@, @<@, @>@, @;@ and so on, common in

@@ -5,10 +5,14 @@
 --
 -- * @DRIFT_PORT@ (default 8080) and @DRIFT_DB_PATH@ (default drift.sqlite).
 -- * @DRIFT_CONFIG@: a model configuration such as config.gemini.yaml. Its
---   @branches@ role generates the rings, its optional @embeddings@ role drives
---   divergence selection, and its optional @cloud@ role makes each session's
---   starting cloud. Without it the server uses the deterministic offline
---   vocabulary ("Drift.Model.SessionMock"), which needs no model.
+--   @branches@ role generates rings, optional @embeddings@ drives divergence,
+--   and optional @cloud@ makes the starting cloud. Without it the server uses
+--   the deterministic offline vocabulary ("Drift.Model.SessionMock").
+-- * @DRIFT_WRITING@: set to 0 to disable sidebar entries. By default each
+--   non-root edge receives a deterministic template entry, without a model.
+-- * @DRIFT_SOURCES@: set to 0 to turn off source search. By default every
+--   non-root edge searches Wikipedia and OpenAlex (no model or key needed;
+--   @OPENALEX_API_KEY@ raises the OpenAlex daily budget).
 -- * The config's optional @final@ role writes the final document at wrap-up.
 --   Without it, or when the model fails, the final document is the kept
 --   entries' own text.
@@ -32,7 +36,11 @@ import Drift.Output.Final (Generate)
 import Drift.Pipeline.Cloud (modelCloud)
 import Drift.Pipeline.BranchService (closeBranchService, newBranchService, withParallelPrefetch)
 import Drift.Pipeline.SessionBranches (liveBranches)
-import Drift.Server.SessionActor (CloudGenerator, newManagerWithCloud, stopManager, withOutputs)
+import Drift.Pipeline.Writing (templateEntry)
+import Drift.Pipeline.Sources (SourceEnv (..), defaultSourceEnv, findSources)
+import Drift.Search.Http (defaultHttpConfig, redactApiKeys, withFetch)
+import Drift.Server.SessionActor
+  (CloudGenerator, Pipelines (..), SourceSearch, newManagerWithPipelinesAndCloud, stopManager, withOutputs)
 import Drift.Server.WebSocket (webSocketApp)
 import Drift.Store.SQLite (closeStore, openStore)
 import Network.HTTP.Types (status200, status404)
@@ -54,6 +62,7 @@ main = do
   port <- maybe 8080 read <$> lookupEnv "DRIFT_PORT"
   databasePath <- maybe "drift.sqlite" id <$> lookupEnv "DRIFT_DB_PATH"
   configPath <- lookupEnv "DRIFT_CONFIG"
+  writing <- (/= Just "0") <$> lookupEnv "DRIFT_WRITING"
   prefetch <- (/= Just "0") <$> lookupEnv "DRIFT_PREFETCH"
   staticDir <- maybe "../frontend/dist" id <$> lookupEnv "DRIFT_STATIC_DIR"
   frontend <- frontendApp staticDir
@@ -61,16 +70,35 @@ main = do
   outputs <-
     either (die . ("final outputs: " <>) . T.unpack) pure $
       modelOutputs finalModel (hPutStrLn stderr . ("final outputs: " <>) . T.unpack)
-  withGenerator configPath prefetch $ \generator cloud -> do
+  withGenerator configPath prefetch $ \generator cloud -> withSources $ \sources -> do
+    putStrLn (if writing then "writing: deterministic template" else "writing: disabled")
     putStrLn ("drift-server listening on http://localhost:" <> show port)
     putStrLn ("session database: " <> databasePath)
     bracket (openStore databasePath) closeStore $ \store ->
-      bracket (withOutputs outputs <$> newManagerWithCloud store generator cloud) stopManager $ \manager -> do
-        let backend = serve api (server manager)
-            app request respond = case pathInfo request of
-              "api" : _ -> backend request respond
-              _ -> frontend request respond
-        run port (websocketsOr defaultConnectionOptions (webSocketApp manager) app)
+      bracket
+        (withOutputs outputs <$> newManagerWithPipelinesAndCloud store
+          (Pipelines generator (if writing then Just templateEntry else Nothing) sources) cloud)
+        stopManager $ \manager -> do
+          let backend = serve api (server manager)
+              app request respond = case pathInfo request of
+                "api" : _ -> backend request respond
+                _ -> frontend request respond
+          run port (websocketsOr defaultConnectionOptions (webSocketApp manager) app)
+
+-- | Source HTTP state is shared across all sessions. Search is on unless
+-- @DRIFT_SOURCES=0@; nothing is built or called when it is off. The manager
+-- and its workers close inside this scope, before the HTTP owner.
+withSources :: (Maybe SourceSearch -> IO a) -> IO a
+withSources action = lookupEnv "DRIFT_SOURCES" >>= \case
+  Just "0" -> putStrLn "sources: disabled (DRIFT_SOURCES=0)" >> action Nothing
+  _ -> do
+    key <- fmap T.pack <$> lookupEnv "OPENALEX_API_KEY"
+    putStrLn ("sources: Wikipedia/OpenAlex (OpenAlex key " <> maybe "absent" (const "present") key <> ")")
+    withFetch defaultHttpConfig $ \fetch -> do
+      let sourceEnv = (defaultSourceEnv fetch)
+            { envOpenAlexKey = key
+            , envLog = hPutStrLn stderr . T.unpack . redactApiKeys }
+      action (Just (findSources sourceEnv))
 
 -- | The branch and cloud generators for the configured model, or the offline
 -- mock. Configuration errors stop the server at start, not at the first pick.
