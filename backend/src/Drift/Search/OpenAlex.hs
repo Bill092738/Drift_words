@@ -11,6 +11,9 @@ module Drift.Search.OpenAlex
   ( searchOpenAlex
   , parseOpenAlex
   , abstractFromIndex
+  , isPdfLink
+  , displayTitle
+  , oldestKeptYear
   ) where
 
 import Data.Aeson (ToJSON (toJSON), Value, eitherDecode, object, withObject, (.:), (.:?), (.=))
@@ -21,10 +24,12 @@ import Data.Either (rights)
 import Data.List (sortOn)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Control.Monad (mfilter)
+import Data.Char (isLower, isUpper)
 import Data.Maybe (catMaybes, fromMaybe, mapMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Drift.Protocol (SourceKind (Paper))
+import Drift.Protocol (SourceKind (Paper, Pdf))
 import Drift.Search.Http (Fetch (..), FetchError (..), HttpRequest (..), HttpResponse (..))
 import Drift.Search.Text (doiUrl, normalizeDoi, plainText)
 import Drift.Search.Types (Hit (..), SourceDraft (..))
@@ -41,7 +46,7 @@ searchOpenAlex fetch apiKey query limit = do
         , reqQuery =
             [ ("search.title_and_abstract", query)
             , ("per_page", T.pack (show limit))
-            , ("select", "id,doi,title,publication_year,type,language,relevance_score,authorships,primary_location,biblio,abstract_inverted_index")
+            , ("select", "id,doi,title,publication_year,type,language,relevance_score,authorships,primary_location,biblio,abstract_inverted_index,best_oa_location,cited_by_count")
             ]
               <> [("api_key", k) | Just k <- [apiKey]]
         , reqHeaders = [("Accept", "application/json")]
@@ -50,16 +55,33 @@ searchOpenAlex fetch apiKey query limit = do
 
 -- | Reads the response. A work without a usable DOI or title is skipped: a
 -- paper that cannot be cited properly is not worth putting on the desk.
+--
+-- Two cheap quality rules, since relevance only counts word overlap: works
+-- from before 'oldestKeptYear' are dropped when the same search has newer
+-- ones (a 1922 kiln paper matched "Flint" through a company name), and works
+-- that someone has cited come before uncited ones.
 parseOpenAlex :: LBS.ByteString -> Either Text [Hit]
 parseOpenAlex body = do
   v <- either (Left . T.pack) Right (eitherDecode body)
   works <- either (Left . T.pack) Right (parseEither resultsP v)
-  pure (catMaybes (rights (zipWith (\i w -> parseEither (workP i) w) [0 ..] works)))
+  let parsed = catMaybes (rights (zipWith (\i w -> parseEither (workP i) w) [0 ..] works))
+      recent = [w | w@(_, year, _) <- parsed, maybe True (>= oldestKeptYear) year]
+      kept = if null recent then parsed else recent
+      -- hitRank stays the position in OpenAlex's ranking, except that when
+      -- some works are cited, uncited ones move behind all of them.
+      anyCited = any (\(_, _, cited) -> cited > 0) kept
+      demote (h, _, cited) = h {hitRank = h.hitRank + (if anyCited && cited == 0 then 1000 else 0)}
+  pure (sortOn (.hitRank) (map demote kept))
   where
     resultsP :: Value -> Parser [Value]
     resultsP = withObject "response" (.: "results")
 
-workP :: Int -> Value -> Parser (Maybe Hit)
+-- | Works older than this are dropped when newer ones match too.
+oldestKeptYear :: Int
+oldestKeptYear = 1950
+
+-- | A work with its year and citation count, for 'parseOpenAlex' to rank.
+workP :: Int -> Value -> Parser (Maybe (Hit, Maybe Int, Int))
 workP rank = withObject "work" $ \o -> do
   rawDoi <- o .:? "doi"
   rawTitle <- o .:? "title"
@@ -69,12 +91,16 @@ workP rank = withObject "work" $ \o -> do
   location <- o .:? "primary_location" :: Parser (Maybe Value)
   biblio <- o .:? "biblio" :: Parser (Maybe Value)
   inverted <- o .:? "abstract_inverted_index" :: Parser (Maybe (Map Text [Int]))
+  openAccess <- o .:? "best_oa_location" :: Parser (Maybe Value)
+  cited <- fromMaybe 0 <$> (o .:? "cited_by_count" :: Parser (Maybe Int))
   let names = mapMaybe authorName authorships
       journal = location >>= sourceName
       pages = biblio >>= pageRange
       doi = rawDoi >>= normalizeDoi
       cleanTitle = plainText <$> rawTitle
       abstractText = maybe "" abstractFromIndex inverted
+      -- An open-access PDF, when OpenAlex has one that really is a PDF.
+      pdf = mfilter isPdfLink (openAccess >>= field "pdf_url")
   pure $ case (doi, cleanTitle) of
     (Just d, Just t) | not (T.null t) ->
       let link = doiUrl d
@@ -91,15 +117,15 @@ workP rank = withObject "work" $ \o -> do
               , ("URL", Just (toJSON link))
               , ("issued", (\y -> object ["date-parts" .= [[y]]]) <$> year)
               ]
-       in Just
+       in Just . (,year,cited) $
             Hit
               { hitProvider = "openalex"
               , hitDraft =
                   SourceDraft
-                    { kind = Paper
-                    , title = t
+                    { kind = maybe Paper (const Pdf) pdf
+                    , title = displayTitle t
                     , site = journal
-                    , url = link
+                    , url = fromMaybe link pdf
                     , thumbnailUrl = Nothing
                     , csl = Just item
                     }
@@ -108,6 +134,29 @@ workP rank = withObject "work" $ \o -> do
               , hitRank = rank
               }
     _ -> Nothing
+
+-- | Titles stored in capitals ("RHYTHMS, CYCLES AND PERIODS IN HEALTH")
+-- are shown in title case. Only the label on the desk changes; the CSL keeps
+-- the title as retrieved.
+displayTitle :: Text -> Text
+displayTitle t
+  | T.any isLower t || not (T.any isUpper t) = t
+  | otherwise = T.unwords (zipWith word [0 :: Int ..] (T.words t))
+  where
+    word i w =
+      let lower = T.toLower w
+       in if i > 0 && lower `elem` minor then lower else T.toTitle lower
+    minor = ["a", "an", "and", "as", "at", "but", "by", "for", "in", "of", "on", "or", "the", "to", "with"]
+
+-- | Whether an open-access link is the PDF itself rather than a landing page
+-- (OpenAlex's @pdf_url@ is sometimes a handle or repository page): the path
+-- ends in @.pdf@, or it is an arXiv @\/pdf\/@ link.
+isPdfLink :: Text -> Bool
+isPdfLink u =
+  let lower = T.toLower (T.strip u)
+      path = T.takeWhile (\c -> c /= '?' && c /= '#') lower
+   in ("https://" `T.isPrefixOf` lower || "http://" `T.isPrefixOf` lower)
+        && (".pdf" `T.isSuffixOf` path || "arxiv.org/pdf/" `T.isInfixOf` path)
 
 authorName :: Value -> Maybe Text
 authorName v = case parseEither (withObject "authorship" (\o -> o .: "author" >>= withObject "author" (.: "display_name"))) v of

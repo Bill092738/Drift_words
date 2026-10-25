@@ -3,6 +3,7 @@
 module ModelProviderSpec (spec) where
 
 import Control.Monad (forM_)
+import Data.List (isPrefixOf)
 import Data.Aeson (Value (..))
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.Aeson.Key as Key
@@ -12,7 +13,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Drift.Model.Config
 import Drift.Model.Mock
-import Drift.Model.OpenAICompat (chatCompletionPayload, defaultRequestOptions, httpErrorMessage, parseChatCompletion, parseEmbeddingResponse, parseSseData, responsesPayload, temperatureFor)
+import Drift.Model.OpenAICompat (chatCompletionPayload, defaultRequestOptions, httpErrorMessage, isAuthFailure, parseChatCompletion, parseEmbeddingResponse, parseSseData, responsesPayload, temperatureFor)
 import Drift.Model.Provider
 import Test.Hspec
 
@@ -75,6 +76,19 @@ spec = do
         `shouldBe` "OpenAI-compatible endpoint returned HTTP 400: {\"error\":{\"message\":\"Unsupported parameter: temperature\"}}"
       httpErrorMessage 502 "" `shouldBe` "OpenAI-compatible endpoint returned HTTP 502"
       length (httpErrorMessage 500 (BSC.replicate 2000 'x')) `shouldBe` length ("OpenAI-compatible endpoint returned HTTP 500: " :: String) + 500
+
+  describe "readable provider errors" $ do
+    it "keeps only the first line and drops the user error wrapper" $ do
+      readableError "user error (The branch model failed: HTTP 500)\nHasCallStack backtrace:\n  collectBacktraces" `shouldBe` "The branch model failed: HTTP 500"
+      readableError "JobFailed \"user error (boom)\\nHasCallStack backtrace:\"" `shouldSatisfy` (not . T.isInfixOf "HasCallStack")
+
+    it "recognizes a rejected key, and only that" $ do
+      isAuthFailure 401 "" `shouldBe` True
+      isAuthFailure 403 "forbidden" `shouldBe` True
+      isAuthFailure 400 "{\"error\":{\"message\":\"API key not valid. Please pass a valid API key.\"}}" `shouldBe` True
+      isAuthFailure 400 "{\"error\":{\"message\":\"Unsupported parameter: temperature\"}}" `shouldBe` False
+      isAuthFailure 500 "auth service down" `shouldBe` False
+      httpErrorMessage 401 "" `shouldSatisfy` (T.unpack authFailureMarker `isPrefixOf`)
 
   describe "provider role routing" $ do
     it "resolves a configured role to its provider" $ do

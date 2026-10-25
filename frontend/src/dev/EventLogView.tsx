@@ -33,8 +33,8 @@ export function EventLogView() {
   return (
     <main className="devlog">
       <header>
-        <h1>Driftwords · event log</h1>
-        <p className="muted">Replaying protocol fixtures through MockTransport (milestone M0).</p>
+        <h1>Driftwords · fixture replay</h1>
+        <p className="muted">Recorded protocol fixtures replayed through MockTransport; this is not the live session.</p>
         <div className="controls">
           <label>
             Fixture{' '}

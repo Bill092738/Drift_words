@@ -1,6 +1,8 @@
 # M1 Session Engine Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status (October 24, 2026):** this plan is complete and merged into `main`; the boxes were ticked afterwards. Remaining work is tracked in [docs/todo/REMAINING.md](../../todo/REMAINING.md).
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** A scripted client completes an exploration through WebSocket using deterministic mock branches, then restarts the server and resumes the same session from SQLite without losing history or placements.
 
@@ -54,11 +56,11 @@ Each agent receives this entire document plus its goal below. Return changed fil
 
 **Proposed M1 policy:** Keys use NFKC, case-folding, and trimming. Default divergence is 0.5; `cap d = 3 - floor (2 * clamp 0 1 d)`. Count a candidate's first visible occurrence once by candidate ID, including the initial cloud; sealing the same candidate does not increment it again. A fresh appearance uses a fresh candidate ID. State application must not consult clocks or randomness.
 
-- [ ] Write `DomainReplaySpec`: all constructors replay, fork/backtrack parent links, priorities and strike/restore, placements, outputs, and stream-then-seal counting once; use the existing fixtures as decoding/replay inputs without changing them.
-- [ ] Run `cd backend && cabal test --test-options='--match DomainReplay'`; verify the new tests fail before implementation.
-- [ ] Implement the state, normalization, cap, and pure fold; export accessors needed by A2/A4 rather than letting them duplicate state logic.
-- [ ] Re-run the spec; confirm fixture replay is deterministic and ID high-water marks include unchosen candidates.
-- [ ] Commit only A1 files and provide A2/A4 the final Session fields/accessors.
+- [x] Write `DomainReplaySpec`: all constructors replay, fork/backtrack parent links, priorities and strike/restore, placements, outputs, and stream-then-seal counting once; use the existing fixtures as decoding/replay inputs without changing them.
+- [x] Run `cd backend && cabal test --test-options='--match DomainReplay'`; verify the new tests fail before implementation.
+- [x] Implement the state, normalization, cap, and pure fold; export accessors needed by A2/A4 rather than letting them duplicate state logic.
+- [x] Re-run the spec; confirm fixture replay is deterministic and ID high-water marks include unchosen candidates.
+- [x] Commit only A1 files and provide A2/A4 the final Session fields/accessors.
 
 ## A2 — Validate commands and prove exploration invariants
 
@@ -68,11 +70,11 @@ Each agent receives this entire document plus its goal below. Return changed fil
 
 **Behavior:** Pick only active candidates, consume the active offer on selection, allocate increasing node IDs, and attach the current parent. StartWithWord is valid before any node is chosen; InsertWord requires focus and requests branches through the actor. Reject empty/whitespace-separated words, already chosen normalized words, unknown IDs, invalid/nonfinite divergence or placement values, and nonpositive promotion levels. Backtrack requires an existing node and moves focus without deleting history. It starts a fresh branch generation, rather than resurrecting already chosen candidates. Divergence changes affect subsequent generation, never reroll the current offer. WrapUp is idempotent; after wrap-up reject exploration/curation changes, allow valid placements and repeated WrapUp. Reopening is deferred because there is no reopen command.
 
-- [ ] Write `DomainDecideSpec` for each command's legal/rejected transitions, single-word Chinese and English input, repeat picks, invalid IDs, and wrap-up policy.
-- [ ] Write `DomainPropertySpec` with generated valid command sequences and admitted mock branches: no visited word newly offered; appearance counts never exceed cap at admission; each nonroot parent exists and precedes its child; replay equals the incrementally applied state. Lowering the cap does not retroactively invalidate earlier offers.
-- [ ] Run both specs and confirm failures before implementation.
-- [ ] Implement decisions and branch admission. Include NFKC/case-fold duplicate cases and stream/seal deduplication in tests.
-- [ ] Run `cd backend && cabal test`; require at least 100 QuickCheck cases per property, and report seeds for failures before committing A2 files.
+- [x] Write `DomainDecideSpec` for each command's legal/rejected transitions, single-word Chinese and English input, repeat picks, invalid IDs, and wrap-up policy.
+- [x] Write `DomainPropertySpec` with generated valid command sequences and admitted mock branches: no visited word newly offered; appearance counts never exceed cap at admission; each nonroot parent exists and precedes its child; replay equals the incrementally applied state. Lowering the cap does not retroactively invalidate earlier offers.
+- [x] Run both specs and confirm failures before implementation.
+- [x] Implement decisions and branch admission. Include NFKC/case-fold duplicate cases and stream/seal deduplication in tests.
+- [x] Run `cd backend && cabal test`; require at least 100 QuickCheck cases per property, and report seeds for failures before committing A2 files.
 
 ## A3 — Persist and reload an atomic event log
 
@@ -82,11 +84,11 @@ Each agent receives this entire document plus its goal below. Return changed fil
 
 **Requirements:** A sessions table distinguishes unknown sessions from empty logs; events use `(session_id, seq)` as a unique key with timestamp and JSON payload. Creation and initial cloud are one transaction. Batch append checks the expected tail and contiguous 1-based sequences within the transaction. Serialize connection access. Never silently skip malformed payloads or sequence gaps. This module depends on protocol types and SessionId only, not command semantics.
 
-- [ ] Write `StoreSpec` for reopen round trips, unknown vs empty sessions, duplicate IDs/sequences, expected-tail mismatch, and whole-batch rollback on failure.
-- [ ] Run the spec to see the unimplemented store fail.
-- [ ] Implement the schema and transactional API, with temporary database files in tests.
-- [ ] Re-run `cd backend && cabal test --test-options='--match Store'`; inspect that rollback leaves the old log unchanged.
-- [ ] Commit A3 files and document exception types for A4.
+- [x] Write `StoreSpec` for reopen round trips, unknown vs empty sessions, duplicate IDs/sequences, expected-tail mismatch, and whole-batch rollback on failure.
+- [x] Run the spec to see the unimplemented store fail.
+- [x] Implement the schema and transactional API, with temporary database files in tests.
+- [x] Re-run `cd backend && cabal test --test-options='--match Store'`; inspect that rollback leaves the old log unchanged.
+- [x] Commit A3 files and document exception types for A4.
 
 ## A4 — Serialize sessions and integrate a deterministic mock
 
@@ -96,11 +98,11 @@ Each agent receives this entire document plus its goal below. Return changed fil
 
 **Requirements:** Allocate unique session IDs, stamp sequence/time in the actor, persist before apply/broadcast, and use one actor registry entry per session under concurrent connects. Restore state before accepting commands. Run branch work outside the actor; track an internal generation token and discard stale results after focus changes or wrap-up. Allocate candidate IDs inside the actor, then use A2 admission. Mock cloud and branches are deterministic, support En/Zh, and allow a scripted 15-step path without exhausted vocabulary. A mock failure leaves the session responsive; insertion/backtracking remain available. A2/A4 are the authority for admission; the future M2 generator supplies suggestions only.
 
-- [ ] Write `SessionActorSpec` with a controllable delayed generator and failing store seam: two clients, ordered sequences, sender-only rejection, persistence failure, concurrent subscription boundary, stale branches, and cancellation/shutdown.
-- [ ] Run the tests before implementation and verify failures.
-- [ ] Implement the registry, mailbox, subscription cleanup, mock, persistence-first commit, and restoration path.
-- [ ] Run `cd backend && cabal test --test-options='--match SessionActor'`; require no database writes or outgoing events for rejected commands and no post-stop worker activity.
-- [ ] Commit A4 files and hand the subscription API to A5.
+- [x] Write `SessionActorSpec` with a controllable delayed generator and failing store seam: two clients, ordered sequences, sender-only rejection, persistence failure, concurrent subscription boundary, stale branches, and cancellation/shutdown.
+- [x] Run the tests before implementation and verify failures.
+- [x] Implement the registry, mailbox, subscription cleanup, mock, persistence-first commit, and restoration path.
+- [x] Run `cd backend && cabal test --test-options='--match SessionActor'`; require no database writes or outgoing events for rejected commands and no post-stop worker activity.
+- [x] Commit A4 files and hand the subscription API to A5.
 
 ## A5 — Expose the session engine over HTTP and WebSocket
 
@@ -110,11 +112,11 @@ Each agent receives this entire document plus its goal below. Return changed fil
 
 **Requirements:** Unknown session/path fails the handshake without creating state. A valid connection receives the entire ordered log first, then incremental Events. Decode ClientMsg and relay Rejected with its original req. Malformed JSON without a reliable req closes only that connection using a documented protocol-error close code, rather than inventing a request ID. Use a single socket writer and always unsubscribe on disconnect. Keep provider keys and implementation failures out of responses.
 
-- [ ] Write `ServerSpec`: health, session creation/language validation, unknown WS session, initial replay, valid pick, matching rejection req, malformed frame isolation, and simultaneous clients receiving identical ordered events.
-- [ ] Run the spec and observe missing API failures.
-- [ ] Implement the HTTP and WebSocket adapters; keep domain rules inside A2/A4.
-- [ ] Re-run `cd backend && cabal test --test-options='--match Server'` against actual local sockets.
-- [ ] Commit A5 files and hand A6 the WAI/WebSocket composition entry points.
+- [x] Write `ServerSpec`: health, session creation/language validation, unknown WS session, initial replay, valid pick, matching rejection req, malformed frame isolation, and simultaneous clients receiving identical ordered events.
+- [x] Run the spec and observe missing API failures.
+- [x] Implement the HTTP and WebSocket adapters; keep domain rules inside A2/A4.
+- [x] Re-run `cd backend && cabal test --test-options='--match Server'` against actual local sockets.
+- [x] Commit A5 files and hand A6 the WAI/WebSocket composition entry points.
 
 ## A6 — Wire startup and prove restart/resume end to end
 
@@ -122,20 +124,20 @@ Each agent receives this entire document plus its goal below. Return changed fil
 
 **Files:** Wire `backend/app/Server.hs`; register all modules/specs/dependencies in `backend/drift.cabal` and `backend/test/Main.hs`; add `SessionE2ESpec.hs`; document commands in `README.md` and add a `Makefile` target if helpful. Preserve `DRIFT_PORT`; add documented `DRIFT_DB_PATH` with default `drift.sqlite`, and ignore runtime database/sidecar files in `.gitignore`.
 
-- [ ] Incrementally register earlier agents' modules and tests, run their focused checks, and avoid bundling unverified modules until their dependencies land.
-- [ ] Implement server composition with graceful manager/store shutdown and the deterministic mock default.
-- [ ] Implement a scripted client test that creates a session, picks a cloud word, explores 15 steps, changes divergence, inserts a word, backtracks, records a placement, and checks a rejected command leaves the log unchanged.
-- [ ] Capture the complete pre-restart log; terminate the server process, restart a new process with the same temporary DB, reconnect to the same session, and assert exact Stamped history equality and replayed state equality.
-- [ ] Continue picking after restart and assert no ID reuse and contiguous sequences; wrap up and restart again to prove WrappedUp persists. Test StartWithWord in a separate session. Do not require OutputsReady: that belongs to M8.
-- [ ] Run `make check` and the documented process-restart test. If native Windows lacks the required toolchain, use an available configured environment or report the exact blocked checks; do not claim roadmap workstation notes prove this machine has GHC installed.
-- [ ] Document the creation request, WS URL, mock mode, DB path, and exact reproduction commands; commit scoped integration changes.
+- [x] Incrementally register earlier agents' modules and tests, run their focused checks, and avoid bundling unverified modules until their dependencies land.
+- [x] Implement server composition with graceful manager/store shutdown and the deterministic mock default.
+- [x] Implement a scripted client test that creates a session, picks a cloud word, explores 15 steps, changes divergence, inserts a word, backtracks, records a placement, and checks a rejected command leaves the log unchanged.
+- [x] Capture the complete pre-restart log; terminate the server process, restart a new process with the same temporary DB, reconnect to the same session, and assert exact Stamped history equality and replayed state equality.
+- [x] Continue picking after restart and assert no ID reuse and contiguous sequences; wrap up and restart again to prove WrappedUp persists. Test StartWithWord in a separate session. Do not require OutputsReady: that belongs to M8.
+- [x] Run `make check` and the documented process-restart test. If native Windows lacks the required toolchain, use an available configured environment or report the exact blocked checks; do not claim roadmap workstation notes prove this machine has GHC installed.
+- [x] Document the creation request, WS URL, mock mode, DB path, and exact reproduction commands; commit scoped integration changes.
 
 ## Final M1 acceptance
 
-- [ ] A real scripted WebSocket client completes the mock exploration and resumes after a new server process starts.
-- [ ] Pure domain invariants 1–4 pass; persisted replay includes all event constructors already in the contract.
-- [ ] Concurrent subscribers see a consistent ordered history; failed writes and stale jobs cannot publish invalid state.
-- [ ] Existing protocol and frontend checks still pass, with no manual edits to generated artifacts.
-- [ ] M2 can replace BranchGenerator without rewriting actor, store, or transport.
+- [x] A real scripted WebSocket client completes the mock exploration and resumes after a new server process starts.
+- [x] Pure domain invariants 1–4 pass; persisted replay includes all event constructors already in the contract.
+- [x] Concurrent subscribers see a consistent ordered history; failed writes and stale jobs cannot publish invalid state.
+- [x] Existing protocol and frontend checks still pass, with no manual edits to generated artifacts.
+- [x] M2 can replace BranchGenerator without rewriting actor, store, or transport.
 
 This is a delegation plan only. No M1 implementation or passing runtime checks are implied by its creation.

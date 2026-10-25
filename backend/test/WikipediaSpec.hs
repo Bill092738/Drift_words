@@ -27,7 +27,7 @@ spec = describe "Drift.Search.Wikipedia" $ do
     tide.hitDraft.kind `shouldBe` WebPage
     tide.hitDraft.site `shouldBe` Just "Wikipedia"
     tide.hitDraft.url `shouldBe` "https://en.wikipedia.org/wiki/Tide"
-    tide.hitDraft.thumbnailUrl `shouldBe` Nothing
+    tide.hitDraft.thumbnailUrl `shouldSatisfy` maybe False ("https://thumb.wikimedia.org/" `T.isPrefixOf`)
     -- Exactly the CSL of the Tide source in protocol/fixtures/sources-heavy.jsonl.
     (decode "{\"type\":\"entry-encyclopedia\",\"title\":\"Tide\",\"container-title\":\"Wikipedia\",\"URL\":\"https://en.wikipedia.org/wiki/Tide\"}" :: Maybe Value)
       `shouldBe` tide.hitDraft.csl

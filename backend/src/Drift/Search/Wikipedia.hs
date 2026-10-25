@@ -57,6 +57,7 @@ pageP host rank = withObject "page" $ \o -> do
   pageTitle <- plainText <$> o .: "title"
   excerpt <- maybe "" plainText <$> o .:? "excerpt"
   description <- maybe "" plainText <$> o .:? "description"
+  thumbnail <- o .:? "thumbnail" >>= maybe (pure Nothing) (withObject "thumbnail" (.:? "url"))
   let pageUrl = "https://" <> host <> "/wiki/" <> TE.decodeUtf8 (urlEncode False (TE.encodeUtf8 key))
       cslItem =
         object
@@ -74,13 +75,17 @@ pageP host rank = withObject "page" $ \o -> do
             , title = pageTitle
             , site = Just "Wikipedia"
             , url = pageUrl
-            , thumbnailUrl = Nothing
+            , thumbnailUrl = absoluteUrl <$> thumbnail
             , csl = Just cslItem
             }
       , hitSnippet = T.unwords (filter (not . T.null) [excerpt, description])
       , hitDoi = Nothing
       , hitRank = rank
       }
+
+-- | The search API gives protocol-relative thumbnail links ("//upload...").
+absoluteUrl :: Text -> Text
+absoluteUrl u = if "//" `T.isPrefixOf` u then "https:" <> u else u
 
 isDisambiguation :: Hit -> Bool
 isDisambiguation h =

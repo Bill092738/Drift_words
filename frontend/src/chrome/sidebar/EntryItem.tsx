@@ -61,15 +61,30 @@ export function EntryItem({ entry, send, onCiteClick }: Props) {
       </div>
 
       <div className="entry-body">
-        {entry.struck ? <s className="relation">{entry.relation}</s> : <p className="relation">{entry.relation}</p>}
-        <p className="explanation">
-          {entry.explanation}
-          {entry.cites.map((n) => (
-            <button key={n} className="cite" onClick={() => onCiteClick(n)} aria-label={`Reference ${n}`}>
-              {n}
-            </button>
-          ))}
-        </p>
+        {entry.showRelation &&
+          (entry.struck ? <s className="relation">{entry.relation}</s> : <p className="relation">{entry.relation}</p>)}
+        {entry.explanation.trim() !== '' ? (
+          <p className="explanation">
+            {entry.explanation}
+            {entry.cites.map((n) => (
+              <button key={n} className="cite" onClick={() => onCiteClick(n)} aria-label={`Reference ${n}`}>
+                {n}
+              </button>
+            ))}
+          </p>
+        ) : (
+          // Without text, bare numbers read as noise: name the source instead.
+          entry.cites.length > 0 && (
+            <p className="cite-chips">
+              {entry.cites.map((n, i) => (
+                <button key={n} className="cite-chip" onClick={() => onCiteClick(n)} aria-label={`Reference ${n}`}>
+                  <span className="cite-number">{n}</span>
+                  {entry.citeLabels[i]}
+                </button>
+              ))}
+            </p>
+          )
+        )}
       </div>
 
       <div className="entry-actions">

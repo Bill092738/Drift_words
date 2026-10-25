@@ -12,7 +12,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Drift.Pipeline.Sources
-import Drift.Protocol (Event (SourceFound), Lang (En), NodeId (NodeId), SourceId (SourceId), SourceKind (WebPage))
+import Drift.Protocol (Event (SourceFound), Lang (En), NodeId (NodeId), SourceId (SourceId), SourceKind (..))
 import Drift.Search.Http (Fetch (..), FetchError (..), HttpRequest (..), HttpResponse (..))
 import Drift.Search.Types (Hit (..), SourceDraft (..), SourceRequest (..), toSource)
 import Drift.Sources.Relevance (acceptAll, rejectAll)
@@ -30,6 +30,8 @@ data Canned = Canned
   { wiki :: Either FetchError HttpResponse
   , alex :: Either FetchError HttpResponse
   , doi :: Text -> Either FetchError HttpResponse
+  , commonsImages :: Either FetchError HttpResponse
+  , commonsAudio :: Either FetchError HttpResponse
   }
 
 fakeFetch :: Canned -> IO (Fetch, IO [Text])
@@ -42,6 +44,10 @@ fakeFetch canned = do
             | "en.wikipedia.org" `T.isInfixOf` rq.reqUrl -> canned.wiki
             | "api.openalex.org" `T.isInfixOf` rq.reqUrl -> canned.alex
             | "https://doi.org/" `T.isPrefixOf` rq.reqUrl -> canned.doi (T.drop 16 rq.reqUrl)
+            | "commons.wikimedia.org" `T.isInfixOf` rq.reqUrl ->
+                if any (\(k, v) -> k == "gsrsearch" && "filetype:audio" `T.isPrefixOf` v) rq.reqQuery
+                  then canned.commonsAudio
+                  else canned.commonsImages
             | otherwise -> Left (Network "unexpected host")
   pure (Fetch run, reverse <$> readIORef seen)
 
@@ -51,6 +57,8 @@ realResponses = do
   a <- fixture "openalex-tides-moon-select.json"
   nature <- fixture "doi-csl-10-1038-35015639.json"
   jgr <- fixture "doi-csl-10-1002-2014je004755.json"
+  images <- fixture "commons-image-tide-moon.json"
+  audio <- fixture "commons-audio-tide.json"
   pure
     Canned
       { wiki = ok w
@@ -59,6 +67,8 @@ realResponses = do
           "10.1038/35015639" -> ok nature
           "10.1002/2014je004755" -> ok jgr
           _ -> Left (BadStatus 404)
+      , commonsImages = ok images
+      , commonsAudio = ok audio
       }
 
 tideToMoon :: SourceRequest
@@ -70,14 +80,43 @@ collect env req = do
   findSources env req (\d -> modifyIORef' out (d :))
   reverse <$> readIORef out
 
+-- | The original pairing (one article, one paper) without the fallback round,
+-- so these tests keep their meaning; the kind draw is tested separately.
 envWith :: Fetch -> SourceEnv
-envWith = defaultSourceEnv
+envWith fetch = (defaultSourceEnv fetch) {envKinds = const [WantWeb, WantPaper], envFallback = False}
 
 draft :: Text -> Text -> SourceDraft
 draft u t = SourceDraft WebPage t Nothing u Nothing Nothing
 
 spec :: Spec
 spec = describe "Drift.Pipeline.Sources" $ do
+  describe "kinds per edge" $ do
+    it "searches only the providers for the wanted kinds" $ do
+      (fetch, urls) <- realResponses >>= fakeFetch
+      found <- collect (envWith fetch) {envKinds = const [WantImage, WantPaper]} tideToMoon
+      seen <- urls
+      length (filter ("wikipedia.org/w/rest.php" `T.isInfixOf`) seen) `shouldBe` 0
+      map (.kind) found `shouldMatchList` [Image, Paper]
+
+    it "fills an empty kind's place from the other kind's passing results" $ do
+      -- No tide audio mentions the moon, so the audio place goes to a second image.
+      (fetch, _) <- realResponses >>= fakeFetch
+      found <- collect (envWith fetch) {envKinds = const [WantAudio, WantImage]} tideToMoon
+      map (.kind) found `shouldBe` [Image, Image]
+
+    it "falls back to the other keyless providers, never OpenAlex, when places stay free" $ do
+      (fetch, urls) <- realResponses >>= fakeFetch
+      found <- collect (envWith fetch) {envKinds = const [WantAudio], envFallback = True} tideToMoon
+      seen <- urls
+      length found `shouldBe` 2
+      filter ("openalex.org" `T.isInfixOf`) seen `shouldBe` []
+
+    it "draws the kinds by default and still finds sources for a real edge" $ do
+      (fetch, _) <- realResponses >>= fakeFetch
+      found <- collect (defaultSourceEnv fetch) tideToMoon
+      length found `shouldBe` 2
+
+
   describe "findSources with saved real responses" $ do
     it "emits the best Wikipedia page and the best paper, at most two" $ do
       (fetch, _) <- realResponses >>= fakeFetch
@@ -148,7 +187,7 @@ spec = describe "Drift.Pipeline.Sources" $ do
       map (.title) found `shouldSatisfy` ("Tide" `elem`)
 
     it "delivers nothing, and does not throw, when everything fails" $ do
-      (fetch, _) <- fakeFetch (Canned (Left Timeout) (Left (Network "down")) (const (Left Timeout)))
+      (fetch, _) <- fakeFetch (Canned (Left Timeout) (Left (Network "down")) (const (Left Timeout)) (Left Timeout) (Left Timeout))
       found <- collect (envWith fetch) tideToMoon
       found `shouldBe` []
 

@@ -160,3 +160,10 @@ spec = describe "Drift.Output.Draft" $ do
       draftMarkdown st (stamped [root]) `shouldBe` "# Draft: tide\n\n_No entries yet._"
     it "titles a path from its first word to its last" $
       pathTitle (stamped [root, child]) `shouldBe` Just "from tide to moon"
+    it "ends the final title at the last word the user kept" $ do
+      let grandchild = NodeChosen (NodeId 3) (Just (NodeId 2)) "gravity" Branch Nothing
+          note n i = EntryWritten (Entry (EntryId i) (NodeId n) "r" "" [])
+          evs = [root, child, note 2 1, grandchild, note 3 2]
+      keptPathTitle (stamped evs) `shouldBe` Just "from tide to gravity"
+      keptPathTitle (stamped (evs <> [EntryStruck (EntryId 2)])) `shouldBe` Just "from tide to moon"
+      pathTitle (stamped (evs <> [EntryStruck (EntryId 2)])) `shouldBe` Just "from tide to gravity"

@@ -14,6 +14,7 @@ module Drift.Output.Draft
   , sourcesOf
   , orderedEntries
   , pathTitle
+  , keptPathTitle
   , entryLine
   ) where
 
@@ -24,7 +25,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
-import Drift.Domain.Entries (EntryState (..), replayEntries)
+import Drift.Domain.Entries (EntryState (..), entriesForNode, replayEntries)
 import Drift.Output.Cite (Rendered (..), escapeMarkdown, renderCitations)
 import Drift.Protocol (Entry (..), Event (..), Source (..), SourceId, Stamped (..))
 
@@ -42,6 +43,21 @@ pathTitle evs = case [w | st <- evs, NodeChosen {word = w} <- [st.event]] of
   [] -> Nothing
   [w] -> Just (escapeMarkdown w)
   first : rest -> Just ("from " <> escapeMarkdown first <> " to " <> escapeMarkdown (foldl (\_ w -> w) first rest))
+
+-- | Like 'pathTitle', but ending at the last word the user kept: a node whose
+-- notes are all struck through does not name the final document.
+keptPathTitle :: [Stamped] -> Maybe Text
+keptPathTitle evs =
+  let entries = replayEntries evs
+      struckOnly n = case entriesForNode n entries of
+        [] -> False
+        es -> all (.struck) es
+      chosen = [(n, w) | st <- evs, NodeChosen {node = n, word = w} <- [st.event]]
+      kept = [w | (n, w) <- chosen, not (struckOnly n)]
+   in case kept of
+        [] -> Nothing
+        [w] -> Just (escapeMarkdown w)
+        first : rest -> Just ("from " <> escapeMarkdown first <> " to " <> escapeMarkdown (last rest))
 
 draftMarkdown :: Style (CslJson Text) -> [Stamped] -> Text
 draftMarkdown style evs =

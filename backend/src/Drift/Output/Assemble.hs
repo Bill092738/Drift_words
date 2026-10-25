@@ -6,10 +6,12 @@ module Drift.Output.Assemble
   ( OutputsGenerator
   , assembleOutputs
   , modelOutputs
+  , orElseOutputs
   ) where
 
 import Citeproc (Style)
 import Citeproc.CslJson (CslJson)
+import Control.Exception (SomeAsyncException, SomeException, fromException, throwIO, try)
 import Data.Text (Text)
 import Drift.Output.Cite (apaStyle)
 import Drift.Output.Draft (draftMarkdown)
@@ -39,6 +41,18 @@ assembleOutputs model style evs = do
 -- | An 'OutputsGenerator' on the embedded APA style, reporting the final stage's
 -- warnings through the given logger. Fails with the style's parse error if the
 -- style cannot be read, which only a broken build can cause.
+-- | Uses the first generator, and the second when the first throws, so a
+-- wrap-up still ends with outputs (for example, model-free ones).
+-- Cancellation is not caught.
+orElseOutputs :: OutputsGenerator -> OutputsGenerator -> OutputsGenerator
+orElseOutputs primary fallback evs = do
+  r <- try (primary evs)
+  case r of
+    Right outputs -> pure outputs
+    Left (e :: SomeException)
+      | Just _ <- fromException @SomeAsyncException e -> throwIO e
+      | otherwise -> fallback evs
+
 modelOutputs :: Maybe Generate -> (Text -> IO ()) -> Either Text OutputsGenerator
 modelOutputs model logWarning = do
   style <- apaStyle

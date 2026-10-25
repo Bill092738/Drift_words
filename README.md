@@ -6,7 +6,7 @@ Driftwords is a browser-based tool for the moments when you want to do something
 
 Language models and web search run in the background. You never talk to an AI.
 
-> **Status:** M1 to M8 are integrated. The M6 live English MVP runs opt-in Wikipedia/OpenAlex searches; M7 writes persistent template notes for every non-root edge; M8 turns the durable tree, notes and citations into a decision tree, draft and final document with Markdown, HTML and Word downloads. Gemini can generate the cloud, rings, embeddings and final rewrite; Gemini note writing, model-backed relevance and additional source providers remain follow-ups. "Driftwords" is a working title.
+> **Status:** M1 to M8 are integrated. Gemini can generate the cloud, rings, embeddings and the final rewrite. Sources come from Wikipedia, OpenAlex (papers and open-access PDFs) and Wikimedia Commons (images and audio), with a different mix of kinds for each edge; search is on by default (`DRIFT_SOURCES=0` turns it off). M7 writes a persistent template note for every non-root edge, and M8 turns the tree, notes and citations into a decision tree, draft and final document with Markdown, HTML and Word downloads. Gemini note writing and model-backed relevance remain follow-ups; see [docs/todo/REMAINING.md](docs/todo/REMAINING.md). "Driftwords" is a working title.
 
 ## Documents
 
@@ -96,7 +96,7 @@ For local development with both processes running separately, use `./start.sh` o
 
 Run backend tests from `backend/` with `cabal build drift-server && cabal test drift-test --test-show-details=direct`. The real child-process persistence test can be run from the repository root with `make backend-restart-test`; it builds the server, resolves the executable with `cabal list-bin drift-server`, and launches three server processes against one temporary database. Run `make check` for backend build/tests and frontend checks.
 
-M6/M7 verification uses no model provider or real source API: saved-response source specs, injected source/writer actor tests, and a fake-source child-process integration test cover admission, citations, bounded work, persistence and WebSocket delivery. Browser acceptance covers live template notes and curation through reload and real backend restart; recorded fixtures cover references, locating/focusing sources, mobile sheets, long prose and reduced motion. Regenerate contracts with `make protocol` and require no semantic diff. The opt-in `DRIFT_LIVE_TESTS=1` source smoke is separate and non-gating. These checks establish behavior, not model quality or real-provider availability. See [M6 completion](docs/todo/M6-sources-live.md) and [M7 completion](docs/todo/M7-sidebar-live.md).
+M6/M7 verification uses no model provider or real source API: saved-response source specs, injected source/writer actor tests, and a fake-source child-process integration test cover admission, citations, bounded work, persistence and WebSocket delivery. Browser acceptance covers live template notes and curation through reload and real backend restart; recorded fixtures cover references, locating/focusing sources, mobile sheets, long prose and reduced motion. Regenerate contracts with `make protocol` and require no semantic diff. The opt-in `DRIFT_LIVE_TESTS=1` source smoke is separate and non-gating. These checks establish behavior, not model quality or real-provider availability. See the [M6/M7 live design](docs/superpowers/specs/2026-10-24-m6-m7-live-design.md); the completion records are in the git history.
 
 Build notes, verified on Ubuntu 26.04 with GHC 9.10.3:
 

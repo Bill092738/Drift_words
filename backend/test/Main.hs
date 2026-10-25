@@ -15,6 +15,7 @@ import qualified FinalSpec
 import qualified HttpSpec
 import qualified LiveSpec
 import qualified ModelProviderSpec
+import qualified CommonsSpec
 import qualified OpenAlexSpec
 import qualified OutputsWiringSpec
 import qualified PipelineSpec
@@ -61,6 +62,7 @@ runSpecs = hspec $ do
   TextSpec.spec
   WikipediaSpec.spec
   OpenAlexSpec.spec
+  CommonsSpec.spec
   CslSpec.spec
   RelevanceSpec.spec
   PipelineSpec.spec

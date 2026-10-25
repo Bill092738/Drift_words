@@ -12,12 +12,15 @@ module Drift.Model.OpenAICompat
   , responsesPayload
   , responsesPayloadWith
   , httpErrorMessage
+  , isAuthFailure
+  , checkModelAccess
   , parseChatCompletion
   , parseResponsesEvent
   , parseEmbeddingResponse
   , parseSseData
   ) where
 
+import Control.Exception (SomeException, displayException, try)
 import Data.Aeson (Value (..), eitherDecodeStrict', encode, object, (.=))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
@@ -225,7 +228,29 @@ ensureStreamSuccess response = do
 httpErrorMessage :: Int -> BS.ByteString -> String
 httpErrorMessage code body =
   let excerpt = T.strip (decodeUtf8Lenient (BS.take errorBodyLimit body))
-   in "OpenAI-compatible endpoint returned HTTP " <> show code <> if T.null excerpt then "" else ": " <> T.unpack excerpt
+      auth = if isAuthFailure code body then T.unpack authFailureMarker <> ". " else ""
+   in auth <> "OpenAI-compatible endpoint returned HTTP " <> show code <> if T.null excerpt then "" else ": " <> T.unpack excerpt
+
+-- | A rejected key: 401 or 403, or a 400 that talks about the key or auth
+-- (Gemini answers a bad key with 400 "API key not valid" / "Invalid Auth key").
+isAuthFailure :: Int -> BS.ByteString -> Bool
+isAuthFailure code body =
+  code `elem` [401, 403]
+    || (code == 400 && any (`T.isInfixOf` T.toLower (decodeUtf8Lenient body)) ["api key", "api_key", "auth", "credential"])
+
+-- | One cheap @GET /models@, so a wrong key fails at startup rather than at
+-- the first pick. 'Left' carries a readable reason; an auth failure starts
+-- with 'authFailureMarker'.
+checkModelAccess :: OpenAISettings -> IO (Either Text ())
+checkModelAccess settings = do
+  manager <- newManager tlsManagerSettings
+  result <- try $ do
+    initial <- parseRequest (T.unpack (trimSlash (openAIBaseUrl settings) <> "/models"))
+    response <- httpLbs (addAuth settings initial {responseTimeout = responseTimeoutMicro 15000000}) manager
+    ensureSuccess (statusCode (responseStatus response)) (LBS.toStrict (LBS.take errorBodyLimit (responseBody response)))
+  pure $ case result of
+    Right () -> Right ()
+    Left (e :: SomeException) -> Left (readableError (T.pack (displayException e)))
 
 consumeSse :: BodyReader -> (BS.ByteString -> IO ()) -> IO ()
 consumeSse reader onData = loop BS.empty []
