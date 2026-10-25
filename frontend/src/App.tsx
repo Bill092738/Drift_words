@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { StoreApi } from 'zustand/vanilla';
 import { Controls } from './chrome/controls/Controls.tsx';
+import { DeskLoading, DeskLoadingPlaceholder } from './chrome/feedback/DeskLoading.tsx';
+import { Toaster } from './chrome/feedback/Toaster.tsx';
 import { OutputsHost } from './chrome/outputs/OutputsHost.tsx';
 import { type Connection, ConnectionPill } from './chrome/shell/ConnectionPill.tsx';
 import { HelpPopover } from './chrome/shell/HelpPopover.tsx';
@@ -139,6 +141,12 @@ export function App() {
   return (
     <>
       {store && <Desk store={store} onScene={(scene) => (desk.current = scene)} />}
+      {store ? (
+        <DeskLoading store={store} />
+      ) : (
+        connection.state !== 'failed' && <DeskLoadingPlaceholder />
+      )}
+      {store && <Toaster store={store} />}
       {store && <Controls store={store} onWrapUp={() => setWrapRequested(true)} onViewOutputs={() => setOutputsOpen(true)} />}
       {store && (
         <OutputsHost

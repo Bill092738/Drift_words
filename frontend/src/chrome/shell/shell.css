@@ -223,31 +223,10 @@
   }
 }
 
-/* An activity indicator in the style of the system one. */
-.spinner {
-  width: 14px;
-  height: 14px;
-  flex: none;
-  border: 2px solid color-mix(in srgb, var(--muted) 30%, transparent);
-  border-top-color: var(--muted);
-  border-radius: 50%;
-  animation: spin 800ms linear infinite;
-}
-
-@keyframes spin {
-  to {
-    rotate: 360deg;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .app-bar,
   .help-panel,
   .connection {
     animation: none;
-  }
-
-  .spinner {
-    animation-duration: 2.4s;
   }
 }

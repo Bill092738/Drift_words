@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { StoreApi } from 'zustand/vanilla';
 import { useSession, type SessionStore } from '../../store/store.ts';
+import { isOutputsFailure } from '../feedback/messages.ts';
 import { icons } from '../icons.tsx';
 import './controls.css';
 
@@ -25,7 +26,6 @@ export function Controls({ store, onWrapUp, onViewOutputs }: Props) {
   const divergence = useSession(store, (s) => s.state.divergence);
   const started = useSession(store, (s) => s.state.nodes.size > 0);
   const hasCloud = useSession(store, (s) => s.state.cloud.length > 0);
-  const rejection = useSession(store, (s) => s.lastRejection);
   const wrappedUp = useSession(store, (s) => s.state.wrappedUp);
   const hasOutputs = useSession(store, (s) => s.state.outputs !== null);
 
@@ -70,14 +70,12 @@ export function Controls({ store, onWrapUp, onViewOutputs }: Props) {
     setWord('');
   };
 
-  // Show the latest rejection briefly.
-  const [notice, setNotice] = useState<string | null>(null);
-  useEffect(() => {
-    if (rejection === null) return;
-    setNotice(rejection.reason);
-    const t = setTimeout(() => setNotice(null), 2500);
-    return () => clearTimeout(t);
-  }, [rejection]);
+  // Rejections are shown by the Toaster. A failed outputs build, after the
+  // server's own retry, offers a retry here too; a retry hides it until the
+  // next failure.
+  const outputsFailures = useSession(store, (s) => s.diagnostics.filter((d) => isOutputsFailure(d.message)).length);
+  const [retriedAt, setRetriedAt] = useState(0);
+  const outputsFailed = !hasOutputs && outputsFailures > retriedAt;
 
   if (!hasCloud) return null;
 
@@ -88,9 +86,27 @@ export function Controls({ store, onWrapUp, onViewOutputs }: Props) {
           <button type="button" className="btn btn-primary outputs-open" onClick={onViewOutputs}>
             View your outputs
           </button>
+        ) : outputsFailed ? (
+          <>
+            <span className="wrap-status" role="status">
+              Your outputs couldn't be made.
+            </span>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                setRetriedAt(outputsFailures);
+                send({ type: 'WrapUp' });
+              }}
+            >
+              <icons.retry size={14} />
+              Try again
+            </button>
+          </>
         ) : (
           <span className="wrap-status" role="status">
-            Wrapped up. Writing your outputs…
+            <span className="spinner" aria-hidden="true" />
+            Writing your outputs…
           </span>
         )}
       </div>
@@ -99,11 +115,6 @@ export function Controls({ store, onWrapUp, onViewOutputs }: Props) {
 
   return (
     <div className="controls material">
-      {notice && (
-        <p className="notice" role="status">
-          {notice}
-        </p>
-      )}
       <label className="divergence" title="How far new branch words jump from the current word">
         <span className="divergence-end">Close</span>
         <input
