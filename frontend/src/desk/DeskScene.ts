@@ -67,7 +67,8 @@ export class DeskScene {
   private readonly sources = new Map<SourceId, SourceObject>();
   /** The source lifted toward the viewer; a second tap opens it. */
   private focusedSource: SourceId | null = null;
-  private readonly reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  /** Follows the system setting live; when set, nothing orbits or drifts. */
+  private reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   private readonly baseZoom: number;
   private prev: SessionState | null = null;
@@ -94,6 +95,12 @@ export class DeskScene {
     };
     scheme.addEventListener('change', retheme);
     this.disposers.push(() => scheme.removeEventListener('change', retheme));
+    const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onMotion = () => {
+      this.reducedMotion = motion.matches;
+    };
+    motion.addEventListener('change', onMotion);
+    this.disposers.push(() => motion.removeEventListener('change', onMotion));
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') this.focusSource(null);
     };
@@ -388,7 +395,9 @@ export class DeskScene {
   // Frame
 
   private frame({ dt, time }: FrameInfo): void {
-    this.ringPhase += ORBIT_SPEED * dt;
+    // With reduced motion the ring holds still and nothing drifts.
+    if (!this.reducedMotion) this.ringPhase += ORBIT_SPEED * dt;
+    const drift = this.reducedMotion ? 0 : 1;
     const center = this.nodes.get(this.ringNode ?? -1)?.target;
     if (center) {
       const n = Math.max(this.ringSlots, this.ringOrder.length);
@@ -397,8 +406,8 @@ export class DeskScene {
       });
     }
 
-    for (const t of this.cloud.values()) this.applyDrift(t, time, 1);
-    for (const f of this.faded) this.applyDrift(f.tile, time, 0.7);
+    for (const t of this.cloud.values()) this.applyDrift(t, time, drift);
+    for (const f of this.faded) this.applyDrift(f.tile, time, 0.7 * drift);
     for (const t of this.allTiles()) {
       // Static tiles (nodes) live in the engine's spatial index: re-index them
       // while they fly to their place or change size, and once as they settle.

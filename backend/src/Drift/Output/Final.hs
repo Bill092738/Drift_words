@@ -46,7 +46,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Drift.Domain.Entries (EntryState (..))
 import Drift.Output.Cite (Rendered (..), escapeBlockStart, escapeInline, escapeMarkdown, renderCitations)
-import Drift.Output.Draft (orderedEntries, pathTitle, sourcesOf)
+import Drift.Output.Draft (keptPathTitle, orderedEntries, sourcesOf)
 import Drift.Pipeline.Citations (Grounded (..), groundCitations, parseSourceKey, sourceKey)
 import Drift.Protocol (Entry (..), Event (..), Lang (..), NodeId, Source (..), SourceId, Stamped (..))
 
@@ -227,7 +227,7 @@ finalMarkdown model opts style evs = do
       lang = case [l | st <- evs, CloudSpawned {lang = l} <- [st.event]] of
         l : _ -> l
         [] -> En
-      title = "# " <> maybe "Final" capitalize (pathTitle evs)
+      title = "# " <> maybe "Final" capitalize (keptPathTitle evs)
   if null kept
     then pure (FinalDoc (title <> "\n\n_No entries were kept at high priority._") [] [])
     else do

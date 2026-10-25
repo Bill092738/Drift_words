@@ -46,7 +46,7 @@ import Drift.Store.SQLite (closeStore, openStore)
 import Network.HTTP.Types (status200, status404)
 import Network.Wai (Application, pathInfo, responseFile, responseLBS)
 import Network.Wai.Application.Static (defaultWebAppSettings, ss404Handler, staticApp)
-import Network.Wai.Handler.Warp (run)
+import Network.Wai.Handler.Warp (defaultSettings, runSettings, setBeforeMainLoop, setPort)
 import Network.Wai.Handler.WebSockets (websocketsOr)
 import Network.WebSockets (defaultConnectionOptions)
 import Servant (serve)
@@ -74,7 +74,6 @@ main = do
       orElseOutputs <$> modelOutputs finalModel outputsLog <*> modelOutputs Nothing outputsLog
   withGenerator configPath prefetch $ \generator cloud -> withSources $ \sources -> do
     putStrLn (if writing then "writing: deterministic template" else "writing: disabled")
-    putStrLn ("drift-server listening on http://localhost:" <> show port)
     putStrLn ("session database: " <> databasePath)
     bracket (openStore databasePath) closeStore $ \store ->
       bracket
@@ -85,7 +84,9 @@ main = do
               app request respond = case pathInfo request of
                 "api" : _ -> backend request respond
                 _ -> frontend request respond
-          run port (websocketsOr defaultConnectionOptions (webSocketApp manager) app)
+          -- Announce only once the port is bound, so "listening" is true when printed.
+          let settings = setBeforeMainLoop (putStrLn ("drift-server listening on http://localhost:" <> show port)) (setPort port defaultSettings)
+          runSettings settings (websocketsOr defaultConnectionOptions (webSocketApp manager) app)
 
 -- | Source HTTP state is shared across all sessions. Search is on unless
 -- @DRIFT_SOURCES=0@; nothing is built or called when it is off. The manager
